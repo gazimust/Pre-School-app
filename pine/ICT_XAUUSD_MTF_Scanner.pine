@@ -1,0 +1,787 @@
+//@version=6
+indicator("ICT XAUUSD MTF Setup Scanner [H4>H1>M15>M5]", shorttitle="ICT XAUUSD Scanner",
+     overlay=true, max_lines_count=100, max_boxes_count=100, max_labels_count=100, max_bars_back=2000)
+
+// =============================================================================================
+// ICT MULTI-TIMEFRAME SETUP SCANNER — XAUUSD
+// -----------------------------------------------------------------------------------------------
+// Hierarchy:  H4 Bias  ->  H1 Context  ->  M15 Setup/POI  ->  M5 Execution
+// Attach this indicator to a 5 minute XAUUSD chart. Higher timeframes are read with
+// request.security(). This is an INDICATOR (not a strategy) — it draws the active setup,
+// maintains a status dashboard and fires alertcondition()/alert() calls. It does not place
+// orders.
+//
+// Non-repainting notes:
+//   * All pivot-based structure (ta.pivothigh/pivotlow) only finalizes `len` bars after the
+//     pivot bar — this is standard, non-repainting, lagging confirmation.
+//   * The HTF bias/zone engine (f_zoneTracker) is called through request.security() using the
+//     well-established "stateful function inside security()" pattern: var state inside the
+//     function is evaluated against the requested symbol/timeframe context, so open/high/low/
+//     close inside it refer to the HTF bars, not the chart bars.
+//   * The M5 state machine only commits state transitions on confirmed bars when
+//     "Confirm Signals On Bar Close Only" is enabled (default), which removes intrabar repaint
+//     risk on alerts and drawings.
+// =============================================================================================
+
+
+// -------------------------------------------------------------------------------------------
+// INPUTS
+// -------------------------------------------------------------------------------------------
+grp_tf = "Multi-Timeframe Setup"
+tfH4  = input.timeframe("240", "H4 Bias Timeframe",        group = grp_tf)
+tfH1  = input.timeframe("60",  "H1 Context Timeframe",      group = grp_tf)
+tfM15 = input.timeframe("15",  "M15 Setup Timeframe",       group = grp_tf)
+
+grp_struct = "Market Structure"
+swingLenH4  = input.int(5, "H4 Swing Pivot Length",  minval = 1, group = grp_struct)
+swingLenH1  = input.int(5, "H1 Swing Pivot Length",  minval = 1, group = grp_struct)
+swingLenM15 = input.int(5, "M15 Swing Pivot Length", minval = 1, group = grp_struct)
+swingLenM5  = input.int(5, "M5 Swing Pivot Length (Protected Structure)", minval = 1, group = grp_struct)
+liqSwingLenM5 = input.int(3, "M5 Liquidity Pivot Length (Sweep Reference / Internal Liquidity)", minval = 1, group = grp_struct)
+
+grp_zones = "Order Blocks & Fair Value Gaps"
+obLookback     = input.int(10,  "OB Search Lookback (bars before BOS)", minval = 2, maxval = 30, group = grp_zones)
+fvgMinAtrH1    = input.float(0.5, "H1 Min FVG Size (x ATR)",  minval = 0.0, step = 0.05, group = grp_zones)
+fvgMinAtrM15   = input.float(0.3, "M15 Min FVG Size (x ATR)", minval = 0.0, step = 0.05, group = grp_zones)
+fvgMinAtrM5    = input.float(0.2, "M5 Min FVG Size (x ATR, displacement leg)", minval = 0.0, step = 0.05, group = grp_zones)
+
+grp_sweep = "Liquidity Sweep"
+liqLookback    = input.int(20, "Liquidity Reference Lookback (M5 bars, informational)", minval = 5, group = grp_sweep)
+eqTolerancePct = input.float(0.05, "Equal High/Low Tolerance (%)", minval = 0.0, step = 0.01, group = grp_sweep)
+
+grp_disp = "Displacement"
+atrLen             = input.int(14, "ATR Length (shared, all timeframes)", minval = 1, group = grp_disp)
+displacementMult    = input.float(0.8, "Displacement Body >= ATR x", minval = 0.1, step = 0.1, group = grp_disp)
+maxOpposingWickPct  = input.float(30.0, "Max Opposing Wick (% of body)", minval = 0.0, maxval = 100.0, group = grp_disp)
+
+grp_risk = "Risk Management"
+slBufferAtrFrac = input.float(0.1, "Stop Loss Buffer (x ATR)", minval = 0.0, step = 0.05, group = grp_risk)
+tp1R = input.float(1.0, "TP1 (R multiple)", minval = 0.1, group = grp_risk)
+tp2R = input.float(2.0, "TP2 (R multiple)", minval = 0.1, group = grp_risk)
+tp3R = input.float(3.0, "TP3 (R multiple)", minval = 0.1, group = grp_risk)
+
+grp_filters = "Filters & Invalidation"
+usePremiumDiscountFilter = input.bool(true, "Require Discount(buy) / Premium(sell) in H1", group = grp_filters)
+maxBarsToDevelop         = input.int(60, "Max M5 Bars Per Phase (Sweep/MSS/Retracement)", minval = 5, group = grp_filters)
+confirmOnCloseOnly       = input.bool(true, "Confirm Signals On Bar Close Only (recommended, no repaint)", group = grp_filters)
+
+grp_vis = "Visuals"
+showSetupBoxes = input.bool(true, "Draw Active Setup (POI / OB / FVG)", group = grp_vis)
+showLevels     = input.bool(true, "Draw Sweep / MSS / Entry / SL / TP Levels", group = grp_vis)
+colBull  = input.color(color.new(color.teal, 0),    "Bullish Color",  group = grp_vis)
+colBear  = input.color(color.new(color.red, 0),      "Bearish Color",  group = grp_vis)
+colPOI   = input.color(color.new(color.blue, 75),    "M15 POI Fill",   group = grp_vis)
+colOB    = input.color(color.new(color.orange, 75),  "M5 Order Block Fill", group = grp_vis)
+colFVG   = input.color(color.new(color.purple, 75),  "M5 FVG Fill",    group = grp_vis)
+
+grp_dash = "Dashboard"
+showDashboard = input.bool(true, "Show Dashboard", group = grp_dash)
+dashSize      = input.string(size.small, "Dashboard Text Size", options = [size.tiny, size.small, size.normal, size.large], group = grp_dash)
+
+
+// -------------------------------------------------------------------------------------------
+// SHARED HELPER FUNCTIONS
+// -------------------------------------------------------------------------------------------
+
+// Formats a price using the instrument's minimum tick, "n/a" when na.
+f_fmt(float x) =>
+    na(x) ? "n/a" : str.tostring(x, format.mintick)
+
+// Formats a distance in price points (always positive), "n/a" when na.
+f_dist(float a, float b) =>
+    (na(a) or na(b)) ? "n/a" : str.tostring(math.abs(a - b), format.mintick)
+
+// -----------------------------------------------------------------------------------------
+// f_zoneTracker : reusable HTF structure / order-block / FVG engine.
+// Called via request.security() for H4, H1 and M15 so each timeframe keeps its OWN
+// persistent (var) state, evaluated against that timeframe's bars. Returns:
+//   bias            : 1 bullish structure, -1 bearish structure, 0 undefined
+//   bull/bearOBtop/bot : nearest ACTIVE (unmitigated) order block for each direction (na if none)
+//   bull/bearFVGtop/bot : nearest ACTIVE (unmitigated) fair value gap for each direction
+//   eq, isPremium   : equilibrium of the latest confirmed swing range and premium/discount flag
+// Only the freshest zone of each type is kept — a new detection overwrites the old one, and a
+// zone is dropped (set na) the instant price closes fully through it (mitigated).
+// -----------------------------------------------------------------------------------------
+f_zoneTracker(int swingLen, float fvgMinATRfrac, bool computeZones) =>
+    var float lastPH = na
+    var float prevPH = na
+    var float lastPL = na
+    var float prevPL = na
+    var int   bias   = 0
+
+    ph = ta.pivothigh(swingLen, swingLen)
+    pl = ta.pivotlow(swingLen, swingLen)
+
+    if not na(ph)
+        prevPH := lastPH
+        lastPH := ph
+    if not na(pl)
+        prevPL := lastPL
+        lastPL := pl
+
+    // Bullish structure  = Higher High + Higher Low, price above the last higher low
+    // Bearish structure  = Lower High  + Lower Low,  price below the last lower high
+    if not na(lastPH) and not na(prevPH) and not na(lastPL) and not na(prevPL)
+        if lastPH > prevPH and lastPL > prevPL and close > lastPL
+            bias := 1
+        else if lastPH < prevPH and lastPL < prevPL and close < lastPH
+            bias := -1
+
+    float eq = (not na(lastPH) and not na(lastPL)) ? (lastPH + lastPL) / 2.0 : na
+    bool isPremium = not na(eq) and close > eq
+
+    var float bullOBtop  = na
+    var float bullOBbot  = na
+    var float bearOBtop  = na
+    var float bearOBbot  = na
+    var float bullFVGtop = na
+    var float bullFVGbot = na
+    var float bearFVGtop = na
+    var float bearFVGbot = na
+
+    if computeZones
+        // --- Order blocks: last opposite-color candle before a break of structure (BOS) ---
+        bullBOS = not na(lastPH) and close > lastPH and close[1] <= lastPH
+        bearBOS = not na(lastPL) and close < lastPL and close[1] >= lastPL
+
+        if bullBOS
+            int obIdx = -1
+            for i = 1 to obLookback
+                if close[i] < open[i]
+                    obIdx := i
+                    break
+            if obIdx != -1
+                bullOBtop := high[obIdx]
+                bullOBbot := low[obIdx]
+
+        if bearBOS
+            int obIdx2 = -1
+            for i = 1 to obLookback
+                if close[i] > open[i]
+                    obIdx2 := i
+                    break
+            if obIdx2 != -1
+                bearOBtop := high[obIdx2]
+                bearOBbot := low[obIdx2]
+
+        // Mitigation: OB invalidated once price closes fully through it
+        if not na(bullOBbot) and close < bullOBbot
+            bullOBtop := na
+            bullOBbot := na
+        if not na(bearOBtop) and close > bearOBtop
+            bearOBtop := na
+            bearOBbot := na
+
+        // --- Fair value gaps: classic 3 candle imbalance ---
+        atrCtx = ta.atr(atrLen)
+        minGap = atrCtx * fvgMinATRfrac
+
+        bullGap = low - high[2]
+        if bullGap > minGap
+            bullFVGtop := low
+            bullFVGbot := high[2]
+
+        bearGap = low[2] - high
+        if bearGap > minGap
+            bearFVGtop := low[2]
+            bearFVGbot := high
+
+        // Mitigation: FVG invalidated once price closes fully through it
+        if not na(bullFVGbot) and close < bullFVGbot
+            bullFVGtop := na
+            bullFVGbot := na
+        if not na(bearFVGtop) and close > bearFVGtop
+            bearFVGtop := na
+            bearFVGbot := na
+
+    [bias, bullOBtop, bullOBbot, bearOBtop, bearOBbot, bullFVGtop, bullFVGbot, bearFVGtop, bearFVGbot, eq, isPremium]
+
+// -----------------------------------------------------------------------------------------
+// f_pickPOI : chooses the nearer of an active OB or active FVG (same direction) to `px`.
+// Returns [top, bottom, isOB]. If neither is active, returns [na, na, na].
+// -----------------------------------------------------------------------------------------
+f_pickPOI(float px, float obTop, float obBot, float fvgTop, float fvgBot) =>
+    obValid  = not na(obTop) and not na(obBot)
+    fvgValid = not na(fvgTop) and not na(fvgBot)
+    float pTop = na
+    float pBot = na
+    bool  isOB = na
+    if obValid and fvgValid
+        obDist  = math.abs(px - (obTop + obBot) / 2.0)
+        fvgDist = math.abs(px - (fvgTop + fvgBot) / 2.0)
+        if obDist <= fvgDist
+            pTop := obTop
+            pBot := obBot
+            isOB := true
+        else
+            pTop := fvgTop
+            pBot := fvgBot
+            isOB := false
+    else if obValid
+        pTop := obTop
+        pBot := obBot
+        isOB := true
+    else if fvgValid
+        pTop := fvgTop
+        pBot := fvgBot
+        isOB := false
+    [pTop, pBot, isOB]
+
+
+// -------------------------------------------------------------------------------------------
+// STEP 1-3 : MULTI-TIMEFRAME BIAS / CONTEXT / SETUP  (via request.security)
+// -------------------------------------------------------------------------------------------
+
+// H4 — Directional Bias only (zone computation skipped for performance, not used)
+[h4Bias, _h4a, _h4b, _h4c, _h4d, _h4e, _h4f, _h4g, _h4h, _h4i, _h4j] =
+     request.security(syminfo.tickerid, tfH4, f_zoneTracker(swingLenH4, fvgMinAtrH1, false),
+     gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_off)
+
+// H1 — Context: bias + active OB/FVG (both directions) + premium/discount
+[h1Bias, h1_bullOBtop, h1_bullOBbot, h1_bearOBtop, h1_bearOBbot,
+ h1_bullFVGtop, h1_bullFVGbot, h1_bearFVGtop, h1_bearFVGbot, h1Eq, h1IsPremium] =
+     request.security(syminfo.tickerid, tfH1, f_zoneTracker(swingLenH1, fvgMinAtrH1, true),
+     gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_off)
+
+// M15 — Setup: active OB/FVG (both directions), aligned direction chosen on the M5 chart below
+[m15Bias, m15_bullOBtop, m15_bullOBbot, m15_bearOBtop, m15_bearOBbot,
+ m15_bullFVGtop, m15_bullFVGbot, m15_bearFVGtop, m15_bearFVGbot, m15Eq, m15IsPremium] =
+     request.security(syminfo.tickerid, tfM15, f_zoneTracker(swingLenM15, fvgMinAtrM15, true),
+     gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_off)
+
+// Only trade in the direction of the H4 bias, and only when H1 context agrees with it.
+combinedBias = (h4Bias != 0 and h1Bias == h4Bias) ? h4Bias : 0
+
+// Premium/discount gate: buys want H1 discount, sells want H1 premium.
+h1DiscountOK = not usePremiumDiscountFilter or
+     (combinedBias == 1 ? not h1IsPremium : combinedBias == -1 ? h1IsPremium : true)
+
+// Nearest M15 POI aligned with the combined bias (this becomes the execution area, Step 3)
+float m15POItop  = na
+float m15POIbot  = na
+bool  m15POIisOB = false
+if combinedBias == 1
+    [t, b, o] = f_pickPOI(close, m15_bullOBtop, m15_bullOBbot, m15_bullFVGtop, m15_bullFVGbot)
+    m15POItop  := t
+    m15POIbot  := b
+    m15POIisOB := o
+else if combinedBias == -1
+    [t, b, o] = f_pickPOI(close, m15_bearOBtop, m15_bearOBbot, m15_bearFVGtop, m15_bearFVGbot)
+    m15POItop  := t
+    m15POIbot  := b
+    m15POIisOB := o
+
+// Nearest H1 POI (dashboard / informational only)
+float h1NearTop = na
+float h1NearBot = na
+if h1Bias == 1
+    [ht, hb, ho] = f_pickPOI(close, h1_bullOBtop, h1_bullOBbot, h1_bullFVGtop, h1_bullFVGbot)
+    h1NearTop := ht
+    h1NearBot := hb
+else if h1Bias == -1
+    [ht, hb, ho] = f_pickPOI(close, h1_bearOBtop, h1_bearOBbot, h1_bearFVGtop, h1_bearFVGbot)
+    h1NearTop := ht
+    h1NearBot := hb
+
+// Is the CURRENTLY LOCKED m15 POI (once a setup is armed) still tagged active upstream?
+f_poiStillValid(int dir, bool isOB) =>
+    dir == 1 ? (isOB ? not na(m15_bullOBtop) : not na(m15_bullFVGtop)) :
+     dir == -1 ? (isOB ? not na(m15_bearOBtop) : not na(m15_bearFVGtop)) : false
+
+
+// -------------------------------------------------------------------------------------------
+// M5 (CHART TIMEFRAME) — STRUCTURE FOR THE EXECUTION ENGINE
+// -------------------------------------------------------------------------------------------
+
+// Protected structure (used for the Market Structure Shift / MSS trigger level)
+var float m5LastPH = na
+var float m5LastPL = na
+m5ph = ta.pivothigh(swingLenM5, swingLenM5)
+m5pl = ta.pivotlow(swingLenM5, swingLenM5)
+if not na(m5ph)
+    m5LastPH := m5ph
+if not na(m5pl)
+    m5LastPL := m5pl
+
+// Liquidity reference (swing highs/lows incl. internal liquidity via a shorter pivot length)
+var float m5LiqPH = na
+var float m5LiqPL = na
+liqph = ta.pivothigh(liqSwingLenM5, liqSwingLenM5)
+liqpl = ta.pivotlow(liqSwingLenM5, liqSwingLenM5)
+if not na(liqph)
+    m5LiqPH := liqph
+if not na(liqpl)
+    m5LiqPL := liqpl
+
+// Equal highs/lows flag (informational): are there >=2 liquidity pivots within tolerance?
+f_hasEqualLevel(float level, int lookback, bool isHigh) =>
+    bool found = false
+    if not na(level)
+        for i = 0 to lookback
+            ref = isHigh ? high[i] : low[i]
+            if math.abs(ref - level) / level * 100.0 <= eqTolerancePct and i > 0
+                found := true
+    found
+
+atrM5 = ta.atr(atrLen)
+
+
+// -------------------------------------------------------------------------------------------
+// STEP 4-10 : EXECUTION STATE MACHINE (Sweep -> Displacement -> MSS -> FVG -> Entry -> Risk)
+// -------------------------------------------------------------------------------------------
+
+var string status   = "Scanning"
+var int    setupDir = 0          // 1 bullish, -1 bearish, 0 none
+
+// M15 POI snapshot (locked at "Prepare")
+var float poiTop  = na
+var float poiBot  = na
+var bool  poiIsOB = false
+
+// Liquidity / sweep
+var float sweepRef   = na   // the liquidity level we are watching to be swept
+var float sweepPrice = na
+var float sweepTime  = na
+
+// Structure / MSS
+var float protectedSwing    = na
+var float mssTime           = na
+var bool  mssConfirmedFlag  = false
+
+// Displacement
+var float dispBarIdx = na
+
+// Displacement-leg FVG / OB (Step 7, entry references)
+var float fvgTop   = na
+var float fvgBot   = na
+var float fvgMid   = na
+var float legObTop = na
+var float legObBot = na
+
+// Entry / Risk (Steps 8-10)
+var float entryZoneTop = na
+var float entryZoneBot = na
+var float entryPrice   = na
+var float slPrice      = na
+var float tp1 = na
+var float tp2 = na
+var float tp3 = na
+
+var float stateStartBar = na
+
+// Explicit "we just dropped back to Scanning" flag. This is set exactly at the two points the
+// machine below transitions INTO "Scanning" (Invalid flash resolving, or a trade concluding) —
+// comparing status to status[1] does not work here because "Invalid" resolves to "Scanning"
+// within the very same bar it is set, so the transition must be flagged, not inferred.
+var bool justReset = false
+
+bool doProcess = confirmOnCloseOnly ? barstate.isconfirmed : true
+
+if doProcess
+    justReset := false
+
+    // ---- "Invalid" is a one-bar flash state; drop back to Scanning right after ----
+    if status == "Invalid"
+        status := "Scanning"
+        justReset := true
+
+    // ---- Fresh scan cleanup: wipe every stale value from the previous setup ----
+    if justReset
+        setupDir := 0
+        poiTop := na
+        poiBot := na
+        poiIsOB := false
+        sweepRef := na
+        sweepPrice := na
+        sweepTime := na
+        protectedSwing := na
+        mssTime := na
+        mssConfirmedFlag := false
+        dispBarIdx := na
+        fvgTop := na
+        fvgBot := na
+        fvgMid := na
+        legObTop := na
+        legObBot := na
+        entryZoneTop := na
+        entryZoneBot := na
+        entryPrice := na
+        slPrice := na
+        tp1 := na
+        tp2 := na
+        tp3 := na
+        stateStartBar := na
+
+    aligned = combinedBias != 0 and not na(m15POItop) and not na(m15POIbot) and h1DiscountOK
+
+    if status == "Scanning"
+        // STEP 1-3: H4 bias, H1 context and a fresh M15 POI are all aligned -> arm the setup
+        if aligned
+            status        := "Prepare"
+            setupDir      := combinedBias
+            poiTop        := m15POItop
+            poiBot        := m15POIbot
+            poiIsOB       := m15POIisOB
+            stateStartBar := bar_index
+
+    else if status == "Prepare"
+        poiValid = f_poiStillValid(setupDir, poiIsOB)
+        if combinedBias != setupDir or not poiValid
+            status := "Invalid"
+        else
+            // STEP 4 (entry condition): has price reached the M15 POI?
+            reachedPOI = setupDir == 1 ? (low <= poiTop) : (high >= poiBot)
+            if reachedPOI
+                status        := "Waiting for Sweep"
+                stateStartBar := bar_index
+                sweepRef      := setupDir == 1 ? m5LiqPL : m5LiqPH
+
+    else if status == "Waiting for Sweep"
+        poiValid = f_poiStillValid(setupDir, poiIsOB)
+        if combinedBias != setupDir or not poiValid
+            status := "Invalid"
+        else if not na(stateStartBar) and (bar_index - stateStartBar) > maxBarsToDevelop
+            status := "Invalid"
+        else if setupDir == 1 and not na(poiBot) and close < poiBot
+            status := "Invalid"   // closed fully through the POI without a sweep-reversal
+        else if setupDir == -1 and not na(poiTop) and close > poiTop
+            status := "Invalid"
+        else if na(sweepRef)
+            status := "Invalid"   // no liquidity reference available to sweep
+        else
+            // STEP 4: liquidity sweep — wick beyond the reference level, close back inside
+            if setupDir == 1 and low < sweepRef and close > sweepRef
+                sweepPrice    := low
+                sweepTime     := time
+                protectedSwing:= m5LastPH
+                status        := "Waiting for MSS"
+                stateStartBar := bar_index
+            else if setupDir == -1 and high > sweepRef and close < sweepRef
+                sweepPrice    := high
+                sweepTime     := time
+                protectedSwing:= m5LastPL
+                status        := "Waiting for MSS"
+                stateStartBar := bar_index
+
+    else if status == "Waiting for MSS"
+        if combinedBias != setupDir
+            status := "Invalid"
+        else if not na(stateStartBar) and (bar_index - stateStartBar) > maxBarsToDevelop
+            status := "Invalid"
+        else if na(protectedSwing)
+            status := "Invalid"
+        else
+            bodySize     = math.abs(close - open)
+            upperWick    = high - math.max(close, open)
+            lowerWick    = math.min(close, open) - low
+            opposingWick = setupDir == 1 ? upperWick : lowerWick
+            rightColor   = setupDir == 1 ? close > open : close < open
+            // STEP 5: displacement candle — large body, small opposing wick, in trade direction
+            isDisplacement = rightColor and bodySize >= atrM5 * displacementMult and
+                 opposingWick <= bodySize * (maxOpposingWickPct / 100.0)
+
+            if na(dispBarIdx) and isDisplacement
+                dispBarIdx := bar_index
+                // STEP 6: MSS may already confirm on the displacement candle itself (close beyond structure)
+                if (setupDir == 1 and close > protectedSwing) or (setupDir == -1 and close < protectedSwing)
+                    mssConfirmedFlag := true
+                    mssTime          := time
+
+            else if not na(dispBarIdx) and bar_index == dispBarIdx + 1
+                // One extra bar allowed to confirm MSS, and this bar is also the 3rd candle
+                // needed to evaluate the displacement-leg FVG (Step 7).
+                if not mssConfirmedFlag and ((setupDir == 1 and close > protectedSwing) or (setupDir == -1 and close < protectedSwing))
+                    mssConfirmedFlag := true
+                    mssTime          := time
+
+                if mssConfirmedFlag
+                    // 3-candle FVG: origin candle [2] (pre-displacement) vs confirmation candle [0] (this bar)
+                    gapSize = setupDir == 1 ? (low - high[2]) : (low[2] - high)
+                    minGap  = atrM5 * fvgMinAtrM5
+                    if gapSize > minGap
+                        if setupDir == 1
+                            fvgTop := low
+                            fvgBot := high[2]
+                        else
+                            fvgTop := low[2]
+                            fvgBot := high
+                        fvgMid   := (fvgTop + fvgBot) / 2.0
+                        legObTop := high[2]
+                        legObBot := low[2]
+
+                        // STEP 8 entry priority: FVG midpoint (1) with the touch zone widened to
+                        // include the adjoining order block (3, "FVG overlap") when present.
+                        entryPrice   := fvgMid
+                        entryZoneTop := setupDir == 1 ? fvgTop : math.max(fvgTop, legObTop)
+                        entryZoneBot := setupDir == 1 ? math.min(fvgBot, legObBot) : fvgBot
+
+                        status        := "Waiting for Retracement"
+                        stateStartBar := bar_index
+                    else
+                        status := "Invalid"   // Step 7 failed: displacement leg produced no valid FVG
+                else
+                    status := "Invalid"       // Step 6 failed: MSS never formed
+
+            else if not na(dispBarIdx) and bar_index > dispBarIdx + 1
+                status := "Invalid"   // safety net, should not normally be reached
+
+    else if status == "Waiting for Retracement"
+        if combinedBias != setupDir
+            status := "Invalid"
+        else if not na(stateStartBar) and (bar_index - stateStartBar) > maxBarsToDevelop
+            status := "Invalid"
+        else if setupDir == 1 and not na(fvgBot) and close < fvgBot
+            status := "Invalid"   // FVG fully mitigated before entry
+        else if setupDir == -1 and not na(fvgTop) and close > fvgTop
+            status := "Invalid"
+        else
+            // STEP 8: price touches the entry zone
+            touched = setupDir == 1 ? (low <= entryZoneTop) : (high >= entryZoneBot)
+            if touched
+                // STEP 9: Stop Loss beyond the sweep, with an optional ATR buffer
+                buf     = atrM5 * slBufferAtrFrac
+                slPrice:= setupDir == 1 ? sweepPrice - buf : sweepPrice + buf
+                rr      = math.abs(entryPrice - slPrice)
+                // STEP 10: Take Profit targets at configurable R multiples
+                tp1    := setupDir == 1 ? entryPrice + rr * tp1R : entryPrice - rr * tp1R
+                tp2    := setupDir == 1 ? entryPrice + rr * tp2R : entryPrice - rr * tp2R
+                tp3    := setupDir == 1 ? entryPrice + rr * tp3R : entryPrice - rr * tp3R
+                status        := "Ready to Execute"
+                stateStartBar := bar_index
+
+    else if status == "Ready to Execute"
+        if combinedBias != setupDir
+            status := "Invalid"
+        else if setupDir == 1 and not na(slPrice) and low <= slPrice
+            status := "Invalid"   // stopped out before ever filling
+        else if setupDir == -1 and not na(slPrice) and high >= slPrice
+            status := "Invalid"
+        else
+            filled = setupDir == 1 ? (low <= entryPrice) : (high >= entryPrice)
+            if filled
+                status        := "Trade Active"
+                stateStartBar := bar_index
+
+    else if status == "Trade Active"
+        // Trade concludes (win or loss) -> quietly resume scanning for the next opportunity.
+        // (This does not go through "Invalid" — it's a normal, successful conclusion, not a
+        // failed setup — so the cleanup that "justReset" triggers below is done inline here.)
+        concluded = setupDir == 1 ? (low <= slPrice or high >= tp3) : (high >= slPrice or low <= tp3)
+        if concluded
+            status := "Scanning"
+            justReset := true
+            setupDir := 0
+            poiTop := na
+            poiBot := na
+            poiIsOB := false
+            sweepRef := na
+            sweepPrice := na
+            sweepTime := na
+            protectedSwing := na
+            mssTime := na
+            mssConfirmedFlag := false
+            dispBarIdx := na
+            fvgTop := na
+            fvgBot := na
+            fvgMid := na
+            legObTop := na
+            legObBot := na
+            entryZoneTop := na
+            entryZoneBot := na
+            entryPrice := na
+            slPrice := na
+            tp1 := na
+            tp2 := na
+            tp3 := na
+            stateStartBar := na
+
+
+// -------------------------------------------------------------------------------------------
+// ALERTS
+// -------------------------------------------------------------------------------------------
+
+sigPrepBull = status == "Prepare" and status[1] != "Prepare" and setupDir == 1
+sigPrepBear = status == "Prepare" and status[1] != "Prepare" and setupDir == -1
+sigExecBull = status == "Ready to Execute" and status[1] != "Ready to Execute" and setupDir == 1
+sigExecBear = status == "Ready to Execute" and status[1] != "Ready to Execute" and setupDir == -1
+sigInvalid  = status == "Invalid" and status[1] != "Invalid"
+sigFilled   = status == "Trade Active" and status[1] != "Trade Active"
+
+alertcondition(sigPrepBull, title = "Bullish Prepare", message = "ICT XAUUSD: Bullish setup preparing - H4/H1 aligned bullish, M15 POI located.")
+alertcondition(sigPrepBear, title = "Bearish Prepare", message = "ICT XAUUSD: Bearish setup preparing - H4/H1 aligned bearish, M15 POI located.")
+alertcondition(sigExecBull, title = "Bullish Execute", message = "ICT XAUUSD: BUY EXECUTE - entry zone reached.")
+alertcondition(sigExecBear, title = "Bearish Execute", message = "ICT XAUUSD: SELL EXECUTE - entry zone reached.")
+alertcondition(sigInvalid,  title = "Trade Invalidated", message = "ICT XAUUSD: Setup invalidated.")
+alertcondition(sigFilled,   title = "Entry Filled", message = "ICT XAUUSD: Entry filled, trade now active.")
+
+f_rrText() =>
+    (na(entryPrice) or na(slPrice) or entryPrice == slPrice) ? "n/a" : "1:" + str.tostring(math.abs(tp3 - entryPrice) / math.abs(entryPrice - slPrice), "#.##")
+
+if sigExecBull
+    msg = "BUY EXECUTE\nSymbol: " + syminfo.ticker + "\nEntry: " + f_fmt(entryPrice) + "\nStop: " + f_fmt(slPrice) +
+         "\nTP1: " + f_fmt(tp1) + "\nTP2: " + f_fmt(tp2) + "\nTP3: " + f_fmt(tp3) + "\nRR: " + f_rrText() +
+         "\nTimeframe: M5\nH4 Bias: Bullish\nH1 Context: Bullish\nM15 POI: Confirmed"
+    alert(msg, alert.freq_once_per_bar_close)
+
+if sigExecBear
+    msg = "SELL EXECUTE\nSymbol: " + syminfo.ticker + "\nEntry: " + f_fmt(entryPrice) + "\nStop: " + f_fmt(slPrice) +
+         "\nTP1: " + f_fmt(tp1) + "\nTP2: " + f_fmt(tp2) + "\nTP3: " + f_fmt(tp3) + "\nRR: " + f_rrText() +
+         "\nTimeframe: M5\nH4 Bias: Bearish\nH1 Context: Bearish\nM15 POI: Confirmed"
+    alert(msg, alert.freq_once_per_bar_close)
+
+if sigPrepBull
+    alert("ICT XAUUSD: BULLISH PREPARE\nH4 Bias: Bullish\nH1 Context: Bullish\nM15 POI: " + f_fmt(poiBot) + "-" + f_fmt(poiTop), alert.freq_once_per_bar_close)
+if sigPrepBear
+    alert("ICT XAUUSD: BEARISH PREPARE\nH4 Bias: Bearish\nH1 Context: Bearish\nM15 POI: " + f_fmt(poiBot) + "-" + f_fmt(poiTop), alert.freq_once_per_bar_close)
+if sigInvalid
+    alert("ICT XAUUSD: TRADE INVALIDATED\nLast Status: setup dropped, resuming scan.", alert.freq_once_per_bar_close)
+if sigFilled
+    alert("ICT XAUUSD: ENTRY FILLED\nEntry: " + f_fmt(entryPrice) + "\nStop: " + f_fmt(slPrice) + "\nTP3: " + f_fmt(tp3), alert.freq_once_per_bar_close)
+
+
+// -------------------------------------------------------------------------------------------
+// CHART VISUALS — draw only the active setup, hide/fade automatically on reset
+// -------------------------------------------------------------------------------------------
+
+var box   poiBox   = na
+var box   legObBox = na
+var box   legFvgBox= na
+var line  swpLine  = na
+var label swpLabel = na
+var line  mssLine  = na
+var label mssLabel = na
+var line  entryLine= na
+var line  slLine   = na
+var line  tp1Line  = na
+var line  tp2Line  = na
+var line  tp3Line  = na
+
+// Wipe all drawings the instant we return to a clean "Scanning" state
+if doProcess and justReset
+    box.delete(poiBox)
+    poiBox := na
+    box.delete(legObBox)
+    legObBox := na
+    box.delete(legFvgBox)
+    legFvgBox := na
+    line.delete(swpLine)
+    swpLine := na
+    label.delete(swpLabel)
+    swpLabel := na
+    line.delete(mssLine)
+    mssLine := na
+    label.delete(mssLabel)
+    mssLabel := na
+    line.delete(entryLine)
+    entryLine := na
+    line.delete(slLine)
+    slLine := na
+    line.delete(tp1Line)
+    tp1Line := na
+    line.delete(tp2Line)
+    tp2Line := na
+    line.delete(tp3Line)
+    tp3Line := na
+
+if showSetupBoxes and doProcess
+    // M15 POI box: visible while armed, fades once we've moved on to M5 execution detail
+    if status == "Prepare" or status == "Waiting for Sweep" or status == "Waiting for MSS"
+        if na(poiBox) and not na(poiTop)
+            poiBox := box.new(bar_index, poiTop, bar_index, poiBot, border_color = colPOI, bgcolor = colPOI, extend = extend.right)
+    else if status == "Waiting for Retracement" or status == "Ready to Execute" or status == "Trade Active"
+        if not na(poiBox)
+            box.set_bgcolor(poiBox, color.new(color.blue, 92))
+            box.set_border_color(poiBox, color.new(color.blue, 92))
+
+    // M5 displacement-leg order block + FVG, drawn once the FVG confirms
+    if not na(fvgTop) and na(legFvgBox)
+        legFvgBox := box.new(bar_index, fvgTop, bar_index, fvgBot, border_color = colFVG, bgcolor = colFVG, extend = extend.right)
+    if not na(legObTop) and na(legObBox)
+        legObBox := box.new(bar_index, legObTop, bar_index, legObBot, border_color = colOB, bgcolor = colOB, extend = extend.right)
+
+if showLevels and doProcess
+    dirCol = setupDir == 1 ? colBull : colBear
+
+    if not na(sweepPrice) and na(swpLine)
+        eqTag    = f_hasEqualLevel(sweepRef, liqLookback, setupDir == -1) ? " (Equal " + (setupDir == 1 ? "Lows" : "Highs") + ")" : ""
+        swpLine  := line.new(bar_index, sweepPrice, bar_index, sweepPrice, color = dirCol, style = line.style_dotted, extend = extend.right)
+        swpLabel := label.new(bar_index, sweepPrice, "Sweep " + f_fmt(sweepPrice) + eqTag, style = setupDir == 1 ? label.style_label_up : label.style_label_down, color = dirCol, textcolor = color.white, size = size.small, tooltip = "Swept at " + str.format_time(sweepTime, "yyyy-MM-dd HH:mm"))
+
+    if mssConfirmedFlag and not na(protectedSwing) and na(mssLine)
+        mssLine  := line.new(bar_index, protectedSwing, bar_index, protectedSwing, color = dirCol, style = line.style_dashed, extend = extend.right)
+        mssLabel := label.new(bar_index, protectedSwing, "MSS " + f_fmt(protectedSwing), style = label.style_label_left, color = dirCol, textcolor = color.white, size = size.small, tooltip = "MSS confirmed at " + str.format_time(mssTime, "yyyy-MM-dd HH:mm"))
+
+    if not na(entryPrice) and na(entryLine) and (status == "Waiting for Retracement" or status == "Ready to Execute" or status == "Trade Active")
+        entryLine := line.new(bar_index, entryPrice, bar_index, entryPrice, color = color.new(color.yellow, 0), style = line.style_solid, extend = extend.right)
+    if not na(slPrice) and na(slLine)
+        slLine := line.new(bar_index, slPrice, bar_index, slPrice, color = color.new(color.red, 0), style = line.style_solid, extend = extend.right)
+    if not na(tp1) and na(tp1Line)
+        tp1Line := line.new(bar_index, tp1, bar_index, tp1, color = color.new(color.green, 40), style = line.style_solid, extend = extend.right)
+    if not na(tp2) and na(tp2Line)
+        tp2Line := line.new(bar_index, tp2, bar_index, tp2, color = color.new(color.green, 20), style = line.style_solid, extend = extend.right)
+    if not na(tp3) and na(tp3Line)
+        tp3Line := line.new(bar_index, tp3, bar_index, tp3, color = color.new(color.green, 0), style = line.style_solid, extend = extend.right)
+
+
+// -------------------------------------------------------------------------------------------
+// DASHBOARD — top right, only redrawn on the latest bar for performance
+// -------------------------------------------------------------------------------------------
+
+var table dash = na
+
+f_biasText(int b) =>
+    b == 1 ? "Bullish" : b == -1 ? "Bearish" : "Neutral"
+
+f_statusColor(string s) =>
+    s == "Ready to Execute" or s == "Trade Active" ? color.new(color.green, 0) :
+     s == "Invalid" ? color.new(color.red, 0) :
+     s == "Scanning" ? color.new(color.gray, 0) : color.new(color.orange, 0)
+
+if showDashboard and barstate.islast
+    if na(dash)
+        dash := table.new(position.top_right, 2, 11, border_width = 1)
+
+    table.cell(dash, 0, 0, "ICT XAUUSD Scanner", text_color = color.white, bgcolor = color.new(color.navy, 0), text_size = dashSize)
+    table.cell(dash, 1, 0, status, text_color = color.white, bgcolor = f_statusColor(status), text_size = dashSize)
+
+    table.cell(dash, 0, 1, "H4 Bias", text_size = dashSize)
+    table.cell(dash, 1, 1, f_biasText(h4Bias), text_color = h4Bias == 1 ? colBull : h4Bias == -1 ? colBear : color.gray, text_size = dashSize)
+
+    table.cell(dash, 0, 2, "H1 Context", text_size = dashSize)
+    table.cell(dash, 1, 2, f_biasText(h1Bias) + (na(h1NearTop) ? "" : "  [" + f_fmt(h1NearBot) + "-" + f_fmt(h1NearTop) + "]"), text_color = h1Bias == 1 ? colBull : h1Bias == -1 ? colBear : color.gray, text_size = dashSize)
+
+    table.cell(dash, 0, 3, "M15 POI", text_size = dashSize)
+    table.cell(dash, 1, 3, na(poiTop) ? "None" : (poiIsOB ? "OB " : "FVG ") + f_fmt(poiBot) + "-" + f_fmt(poiTop), text_size = dashSize)
+
+    table.cell(dash, 0, 4, "Liquidity Sweep", text_size = dashSize)
+    table.cell(dash, 1, 4, na(sweepPrice) ? "Pending" : f_fmt(sweepPrice), text_size = dashSize)
+
+    table.cell(dash, 0, 5, "Displacement", text_size = dashSize)
+    table.cell(dash, 1, 5, na(dispBarIdx) ? "Pending" : "Bar " + str.tostring(dispBarIdx, "#"), text_size = dashSize)
+
+    table.cell(dash, 0, 6, "MSS", text_size = dashSize)
+    table.cell(dash, 1, 6, mssConfirmedFlag ? f_fmt(protectedSwing) : "Pending", text_size = dashSize)
+
+    table.cell(dash, 0, 7, "FVG (leg)", text_size = dashSize)
+    table.cell(dash, 1, 7, na(fvgTop) ? "Pending" : f_fmt(fvgBot) + "-" + f_fmt(fvgTop), text_size = dashSize)
+
+    table.cell(dash, 0, 8, "Entry", text_size = dashSize)
+    table.cell(dash, 1, 8, na(entryPrice) ? "Pending" : f_fmt(entryPrice), text_size = dashSize)
+
+    table.cell(dash, 0, 9, "Risk:Reward", text_size = dashSize)
+    table.cell(dash, 1, 9, f_rrText(), text_size = dashSize)
+
+    // Intelligent status line: tells the trader exactly what price needs to do next
+    string detail = switch status
+        "Scanning"                => "Monitoring H4/H1/M15 alignment for a valid POI."
+        "Prepare"                 => "Armed " + f_biasText(setupDir) + ". Waiting for price to reach M15 POI " + f_fmt(poiBot) + "-" + f_fmt(poiTop) + ". Distance: " + f_dist(close, setupDir == 1 ? poiTop : poiBot) + " pts"
+        "Waiting for Sweep"       => "At POI. Waiting for a sweep " + (setupDir == 1 ? "below " + f_fmt(sweepRef) : "above " + f_fmt(sweepRef)) + ". Distance: " + f_dist(close, sweepRef) + " pts"
+        "Waiting for MSS"         => "Swept liquidity at " + f_fmt(sweepPrice) + ". Waiting for M5 candle close " + (setupDir == 1 ? "above " : "below ") + f_fmt(protectedSwing) + ". Distance: " + f_dist(close, protectedSwing) + " pts"
+        "Waiting for Retracement" => "MSS confirmed. Entry Zone: " + f_fmt(entryZoneBot) + "-" + f_fmt(entryZoneTop) + ". Optimal Entry: " + f_fmt(entryPrice) + ". Distance: " + f_dist(close, entryPrice) + " pts"
+        "Ready to Execute"        => "Entry zone reached. Entry: " + f_fmt(entryPrice) + " Stop: " + f_fmt(slPrice) + ". Waiting for fill."
+        "Trade Active"            => "Trade active. Entry: " + f_fmt(entryPrice) + " Stop: " + f_fmt(slPrice) + " TP3: " + f_fmt(tp3)
+        "Invalid"                 => "Setup invalidated - resuming scan."
+        => ""
+
+    table.cell(dash, 0, 10, "Status Detail", text_size = dashSize)
+    table.cell(dash, 1, 10, detail, text_size = dashSize)
