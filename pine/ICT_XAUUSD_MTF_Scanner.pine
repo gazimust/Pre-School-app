@@ -1,5 +1,5 @@
 //@version=6
-indicator("ICT XAUUSD MTF Setup Scanner [H4>H1>M15>M5]", shorttitle="ICT XAUUSD Scanner",
+indicator("ICT XAUUSD MTF Setup Scanner [H4>H1>M15>M5]", shorttitle="ICTXAUUSD",
      overlay=true, max_lines_count=100, max_boxes_count=100, max_labels_count=100, max_bars_back=2000)
 
 // =============================================================================================
@@ -139,6 +139,11 @@ f_zoneTracker(int swingLen, float fvgMinATRfrac, bool computeZones) =>
     var float bearFVGtop = na
     var float bearFVGbot = na
 
+    // ta.atr() must run unconditionally every bar (not inside the "if computeZones" branch)
+    // so its internal running state stays consistent regardless of which branch is taken.
+    atrCtx = ta.atr(atrLen)
+    minGap = atrCtx * fvgMinATRfrac
+
     if computeZones
         // --- Order blocks: last opposite-color candle before a break of structure (BOS) ---
         bullBOS = not na(lastPH) and close > lastPH and close[1] <= lastPH
@@ -173,9 +178,6 @@ f_zoneTracker(int swingLen, float fvgMinATRfrac, bool computeZones) =>
             bearOBbot := na
 
         // --- Fair value gaps: classic 3 candle imbalance ---
-        atrCtx = ta.atr(atrLen)
-        minGap = atrCtx * fvgMinATRfrac
-
         bullGap = low - high[2]
         if bullGap > minGap
             bullFVGtop := low
@@ -205,7 +207,7 @@ f_pickPOI(float px, float obTop, float obBot, float fvgTop, float fvgBot) =>
     fvgValid = not na(fvgTop) and not na(fvgBot)
     float pTop = na
     float pBot = na
-    bool  isOB = na
+    bool  isOB = false   // unused when both pTop/pBot stay na; avoids assigning "na" to a bool
     if obValid and fvgValid
         obDist  = math.abs(px - (obTop + obBot) / 2.0)
         fvgDist = math.abs(px - (fvgTop + fvgBot) / 2.0)
