@@ -1,0 +1,349 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Core identity
+// ---------------------------------------------------------------------------
+
+enum Role {
+  ADMIN
+  STAFF
+  PARENT
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role
+  phone        String?
+  avatarUrl    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  children              ParentChild[]
+  invoicesBilledTo      Invoice[]        @relation("InvoiceParent")
+  newslettersAuthored   Newsletter[]     @relation("NewsletterAuthor")
+  announcementsAuthored Announcement[]   @relation("AnnouncementAuthor")
+  diaryEntriesRecorded  DiaryEntry[]     @relation("DiaryStaff")
+  observationsRecorded  Observation[]    @relation("ObservationStaff")
+  reportsPrepared       Report[]         @relation("ReportStaff")
+}
+
+// ---------------------------------------------------------------------------
+// Setting / branding (single row)
+// ---------------------------------------------------------------------------
+
+model Setting {
+  id             String  @id @default(cuid())
+  nurseryName    String  @default("Little Sprouts Nursery")
+  address        String?
+  phone          String?
+  email          String?
+  invoicePrefix  String  @default("INV")
+  logoUrl        String?
+}
+
+// ---------------------------------------------------------------------------
+// Children & families
+// ---------------------------------------------------------------------------
+
+model Child {
+  id            String   @id @default(cuid())
+  firstName     String
+  lastName      String
+  dateOfBirth   DateTime
+  gender        String?
+  room          String
+  startDate     DateTime
+  allergies     String?
+  medicalNotes  String?
+  photoUrl      String?
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  parents       ParentChild[]
+  invoices      Invoice[]
+  diaryEntries  DiaryEntry[]
+  observations  Observation[]
+  reports       Report[]
+}
+
+model ParentChild {
+  id               String  @id @default(cuid())
+  parentId         String
+  childId          String
+  relationship     String  @default("Parent")
+  isPrimaryContact Boolean @default(false)
+
+  parent User  @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  child  Child @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  @@unique([parentId, childId])
+}
+
+// ---------------------------------------------------------------------------
+// Invoicing
+// ---------------------------------------------------------------------------
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+model Invoice {
+  id            String        @id @default(cuid())
+  invoiceNumber String        @unique
+  childId       String
+  parentId      String
+  issueDate     DateTime      @default(now())
+  dueDate       DateTime
+  status        InvoiceStatus @default(DRAFT)
+  notes         String?
+  paidAt        DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  child     Child             @relation(fields: [childId], references: [id], onDelete: Cascade)
+  parent    User              @relation("InvoiceParent", fields: [parentId], references: [id], onDelete: Cascade)
+  lineItems InvoiceLineItem[]
+}
+
+model InvoiceLineItem {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  description String
+  quantity    Decimal @default(1)
+  unitPrice   Decimal
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// Newsletters & announcements
+// ---------------------------------------------------------------------------
+
+model Newsletter {
+  id            String    @id @default(cuid())
+  title         String
+  body          String
+  coverImageUrl String?
+  authorId      String
+  publishedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  author User @relation("NewsletterAuthor", fields: [authorId], references: [id])
+}
+
+enum AnnouncementPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+model Announcement {
+  id          String               @id @default(cuid())
+  title       String
+  body        String
+  priority    AnnouncementPriority @default(NORMAL)
+  authorId    String
+  publishedAt DateTime?
+  expiresAt   DateTime?
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  author User @relation("AnnouncementAuthor", fields: [authorId], references: [id])
+}
+
+// ---------------------------------------------------------------------------
+// Daily diary
+// ---------------------------------------------------------------------------
+
+enum Mood {
+  HAPPY
+  CONTENT
+  UNSETTLED
+  TIRED
+  UNWELL
+}
+
+enum MealType {
+  BREAKFAST
+  SNACK_AM
+  LUNCH
+  SNACK_PM
+  DINNER
+}
+
+enum MealAmount {
+  NONE
+  SOME
+  MOST
+  ALL
+}
+
+enum NappyType {
+  WET
+  DIRTY
+  BOTH
+  DRY
+}
+
+model DiaryEntry {
+  id         String   @id @default(cuid())
+  childId    String
+  staffId    String
+  date       DateTime
+  mood       Mood?
+  activities String?
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  child        Child          @relation(fields: [childId], references: [id], onDelete: Cascade)
+  staff        User           @relation("DiaryStaff", fields: [staffId], references: [id])
+  meals        Meal[]
+  naps         Nap[]
+  nappyChanges NappyChange[]
+
+  @@unique([childId, date])
+}
+
+model Meal {
+  id           String     @id @default(cuid())
+  diaryEntryId String
+  type         MealType
+  amountEaten  MealAmount
+  notes        String?
+
+  diaryEntry DiaryEntry @relation(fields: [diaryEntryId], references: [id], onDelete: Cascade)
+}
+
+model Nap {
+  id           String    @id @default(cuid())
+  diaryEntryId String
+  startTime    DateTime
+  endTime      DateTime?
+
+  diaryEntry DiaryEntry @relation(fields: [diaryEntryId], references: [id], onDelete: Cascade)
+}
+
+model NappyChange {
+  id           String    @id @default(cuid())
+  diaryEntryId String
+  time         DateTime
+  type         NappyType
+  notes        String?
+
+  diaryEntry DiaryEntry @relation(fields: [diaryEntryId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// EYFS observations & reports
+// ---------------------------------------------------------------------------
+
+enum EYFSAreaType {
+  PRIME
+  SPECIFIC
+}
+
+model EYFSArea {
+  id          String       @id @default(cuid())
+  name        String       @unique
+  type        EYFSAreaType
+  description String?
+  sortOrder   Int          @default(0)
+
+  observationLinks ObservationArea[]
+  reportEntries    ReportEntry[]
+}
+
+enum EYFSAgeBand {
+  BIRTH_TO_THREE
+  THREE_TO_FOUR
+}
+
+model Observation {
+  id        String      @id @default(cuid())
+  childId   String
+  staffId   String
+  date      DateTime
+  title     String
+  narrative String
+  ageBand   EYFSAgeBand
+  photoUrl  String?
+  nextSteps String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  child Child             @relation(fields: [childId], references: [id], onDelete: Cascade)
+  staff User              @relation("ObservationStaff", fields: [staffId], references: [id])
+  areas ObservationArea[]
+}
+
+model ObservationArea {
+  id            String @id @default(cuid())
+  observationId String
+  eyfsAreaId    String
+
+  observation Observation @relation(fields: [observationId], references: [id], onDelete: Cascade)
+  eyfsArea    EYFSArea    @relation(fields: [eyfsAreaId], references: [id], onDelete: Cascade)
+
+  @@unique([observationId, eyfsAreaId])
+}
+
+enum ReportType {
+  TWO_YEAR_CHECK
+  TERMLY_SUMMARY
+  TRANSITION
+  SCHOOL_READINESS
+}
+
+enum DevelopmentLevel {
+  EMERGING
+  EXPECTED
+  EXCEEDING
+}
+
+model Report {
+  id                 String     @id @default(cuid())
+  childId            String
+  staffId            String
+  type               ReportType
+  periodLabel        String
+  ageBand            EYFSAgeBand
+  summary            String
+  nextSteps          String?
+  generatedAt        DateTime   @default(now())
+  sharedWithParentAt DateTime?
+
+  child   Child         @relation(fields: [childId], references: [id], onDelete: Cascade)
+  staff   User          @relation("ReportStaff", fields: [staffId], references: [id])
+  entries ReportEntry[]
+}
+
+model ReportEntry {
+  id         String           @id @default(cuid())
+  reportId   String
+  eyfsAreaId String
+  level      DevelopmentLevel
+  comment    String?
+
+  report   Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  eyfsArea EYFSArea @relation(fields: [eyfsAreaId], references: [id], onDelete: Cascade)
+
+  @@unique([reportId, eyfsAreaId])
+}

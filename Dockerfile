@@ -1,20 +1,27 @@
-FROM python:3.11-slim
-
-# Install Playwright + Chromium in one go (no manual apt list needed)
-RUN pip install --no-cache-dir --upgrade pip
-
-# Copy requirements first to leverage Docker layer cache
+FROM node:20-slim AS base
 WORKDIR /app
-COPY requirements.txt .
 
-# Install Python deps
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies
+FROM base AS deps
+COPY package.json package-lock.json* ./
+RUN npm install
 
-# Install Chromium + all OS deps via Playwright helper
-RUN python -m playwright install --with-deps chromium
+# Build
+FROM base AS builder
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN npx prisma generate
+RUN npm run build
 
-# Copy code
-COPY popmart_stock_watcher.py .
+# Runtime
+FROM base AS runner
+ENV NODE_ENV=production
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/next.config.mjs ./next.config.mjs
 
-# Run the watcher
-CMD ["python", "popmart_stock_watcher.py"]
+EXPOSE 3000
+CMD ["sh", "-c", "npx prisma migrate deploy && npm run start"]
