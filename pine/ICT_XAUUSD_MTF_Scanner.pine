@@ -707,11 +707,11 @@ if showLevels and doProcess
     if not na(sweepPrice) and na(swpLine)
         eqTag    = f_hasEqualLevel(sweepRef, liqLookback, setupDir == -1) ? " (Equal " + (setupDir == 1 ? "Lows" : "Highs") + ")" : ""
         swpLine  := line.new(bar_index, sweepPrice, bar_index, sweepPrice, color = dirCol, style = line.style_dotted, extend = extend.right)
-        swpLabel := label.new(bar_index, sweepPrice, "Sweep " + f_fmt(sweepPrice) + eqTag, style = setupDir == 1 ? label.style_label_up : label.style_label_down, color = dirCol, textcolor = color.white, size = size.small, tooltip = "Swept at " + str.format_time(sweepTime, "yyyy-MM-dd HH:mm"))
+        swpLabel := label.new(bar_index, sweepPrice, "Sweep " + f_fmt(sweepPrice) + eqTag, style = setupDir == 1 ? label.style_label_up : label.style_label_down, color = dirCol, textcolor = color.white, size = size.small, tooltip = "Swept at " + str.format_time(int(sweepTime), "yyyy-MM-dd HH:mm"))
 
     if mssConfirmedFlag and not na(protectedSwing) and na(mssLine)
         mssLine  := line.new(bar_index, protectedSwing, bar_index, protectedSwing, color = dirCol, style = line.style_dashed, extend = extend.right)
-        mssLabel := label.new(bar_index, protectedSwing, "MSS " + f_fmt(protectedSwing), style = label.style_label_left, color = dirCol, textcolor = color.white, size = size.small, tooltip = "MSS confirmed at " + str.format_time(mssTime, "yyyy-MM-dd HH:mm"))
+        mssLabel := label.new(bar_index, protectedSwing, "MSS " + f_fmt(protectedSwing), style = label.style_label_left, color = dirCol, textcolor = color.white, size = size.small, tooltip = "MSS confirmed at " + str.format_time(int(mssTime), "yyyy-MM-dd HH:mm"))
 
     if not na(entryPrice) and na(entryLine) and (status == "Waiting for Retracement" or status == "Ready to Execute" or status == "Trade Active")
         entryLine := line.new(bar_index, entryPrice, bar_index, entryPrice, color = color.new(color.yellow, 0), style = line.style_solid, extend = extend.right)
