@@ -105,13 +105,46 @@ admin never shows the other's children, invoices, newsletters, etc.
 
 ## Deployment
 
+### Render
+
 A `Dockerfile` and `render.yaml` are included for deploying to [Render](https://render.com):
 it provisions a managed Postgres database and a Docker web service, running
 `prisma migrate deploy` on boot. Set `NEXTAUTH_URL` to your deployed URL after the
 first deploy.
 
-For any other host, build the Docker image and provide `DATABASE_URL`,
-`NEXTAUTH_URL`, and `NEXTAUTH_SECRET` environment variables.
+### Vercel
+
+Vercel builds this repo directly from source (the `Dockerfile`/`render.yaml` are ignored)
+and doesn't host Postgres itself, so you need an external database.
+
+1. **Provision Postgres** — [Vercel Postgres](https://vercel.com/docs/storage/vercel-postgres)
+   (Neon-backed), or Neon/Supabase/Railway directly. Copy its connection string.
+2. **Import the repo** into Vercel; it auto-detects Next.js, no extra config needed.
+3. **Set environment variables** (Project → Settings → Environment Variables), for
+   Production (and Preview, if you want preview deploys to work):
+   - `DATABASE_URL` — the connection string from step 1
+   - `NEXTAUTH_SECRET` — a fresh secret, e.g. `openssl rand -base64 32` (don't reuse the
+     local dev value from `.env`)
+   - `NEXTAUTH_URL` — your deployed URL, e.g. `https://your-app.vercel.app`
+4. **Deploy.** The `vercel-build` script (`package.json`) runs `prisma generate && prisma
+   migrate deploy && next build` — Vercel automatically uses `vercel-build` over `build`
+   when it's present, so migrations are applied on every deploy with no manual step.
+5. **Seed data (optional, one-time)** — Vercel doesn't run the seed script for you. From
+   your machine, point `DATABASE_URL` at the production database and run
+   `npm run db:seed`, or use `vercel env pull` to fetch the production env vars locally
+   first.
+
+Caveat: because `vercel-build` runs `prisma migrate deploy` on *every* build, preview
+deployments (e.g. one per pull request) will also apply pending migrations against
+whatever `DATABASE_URL` they're configured with. Point Preview environment variables at
+a separate, non-production database if you don't want preview branches applying schema
+changes to production data.
+
+### Any other host
+
+Build the Docker image (or run `npm run build && npm start`) and provide `DATABASE_URL`,
+`NEXTAUTH_URL`, and `NEXTAUTH_SECRET` environment variables, applying migrations
+(`npx prisma migrate deploy`) before starting the app.
 
 ## Notes on scope
 
