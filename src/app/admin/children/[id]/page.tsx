@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { getSession, nurseryIdOrThrow } from "@/lib/session";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button, LinkButton } from "@/components/ui/Button";
@@ -11,8 +12,11 @@ import { linkParentToChild, unlinkParentFromChild, toggleChildActive } from "@/l
 import { Role } from "@prisma/client";
 
 export default async function ChildDetailPage({ params }: { params: { id: string } }) {
-  const child = await prisma.child.findUnique({
-    where: { id: params.id },
+  const session = await getSession();
+  const nurseryId = nurseryIdOrThrow(session!);
+
+  const child = await prisma.child.findFirst({
+    where: { id: params.id, nurseryId },
     include: {
       parents: { include: { parent: true } },
       observations: { orderBy: { date: "desc" }, take: 5, include: { areas: { include: { eyfsArea: true } } } },
@@ -24,7 +28,7 @@ export default async function ChildDetailPage({ params }: { params: { id: string
   if (!child) notFound();
 
   const availableParents = await prisma.user.findMany({
-    where: { role: Role.PARENT, NOT: { children: { some: { childId: child.id } } } },
+    where: { role: Role.PARENT, nurseryId, NOT: { children: { some: { childId: child.id } } } },
     orderBy: { name: "asc" },
   });
 

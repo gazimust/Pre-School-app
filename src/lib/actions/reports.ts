@@ -4,10 +4,11 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { EYFSAgeBand, ReportType, DevelopmentLevel } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { requireStaff } from "@/lib/session";
+import { requireStaff, nurseryIdOrThrow } from "@/lib/session";
 
 export async function createReport(formData: FormData) {
   const session = await requireStaff();
+  const nurseryId = nurseryIdOrThrow(session);
 
   const childId = String(formData.get("childId") || "");
   const type = formData.get("type") as ReportType;
@@ -19,6 +20,9 @@ export async function createReport(formData: FormData) {
   if (!childId || !type || !periodLabel || !summary) {
     throw new Error("Please complete all required fields.");
   }
+
+  const child = await prisma.child.findFirst({ where: { id: childId, nurseryId } });
+  if (!child) throw new Error("Child not found.");
 
   const areas = await prisma.eYFSArea.findMany();
   const entries = areas
@@ -32,6 +36,7 @@ export async function createReport(formData: FormData) {
 
   const report = await prisma.report.create({
     data: {
+      nurseryId,
       childId,
       staffId: session.user.id,
       type,
@@ -48,16 +53,20 @@ export async function createReport(formData: FormData) {
 }
 
 export async function shareReportWithParent(reportId: string) {
-  await requireStaff();
-  await prisma.report.update({ where: { id: reportId }, data: { sharedWithParentAt: new Date() } });
+  const session = await requireStaff();
+  const nurseryId = nurseryIdOrThrow(session);
+
+  await prisma.report.updateMany({ where: { id: reportId, nurseryId }, data: { sharedWithParentAt: new Date() } });
   revalidatePath("/admin/reports");
   revalidatePath(`/admin/reports/${reportId}`);
   revalidatePath("/parent/learning");
 }
 
 export async function deleteReport(reportId: string) {
-  await requireStaff();
-  await prisma.report.delete({ where: { id: reportId } });
+  const session = await requireStaff();
+  const nurseryId = nurseryIdOrThrow(session);
+
+  await prisma.report.deleteMany({ where: { id: reportId, nurseryId } });
   revalidatePath("/admin/reports");
   redirect("/admin/reports");
 }

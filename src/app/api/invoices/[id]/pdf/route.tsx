@@ -20,13 +20,14 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     return new NextResponse("Not found", { status: 404 });
   }
 
-  const isStaff = session.user.role === "ADMIN" || session.user.role === "STAFF";
+  const isStaff =
+    (session.user.role === "ADMIN" || session.user.role === "STAFF") && session.user.nurseryId === invoice.nurseryId;
   const isOwner = session.user.id === invoice.parentId;
   if (!isStaff && !isOwner) {
     return new NextResponse("Forbidden", { status: 403 });
   }
 
-  const setting = await prisma.setting.findFirst();
+  const setting = await prisma.nursery.findUnique({ where: { id: invoice.nurseryId } });
 
   const pdfBuffer = await renderToBuffer(
     <InvoiceDocument
@@ -39,7 +40,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
         notes: invoice.notes,
         childName: `${invoice.child.firstName} ${invoice.child.lastName}`,
         parentName: invoice.parent.name,
-        nurseryName: setting?.nurseryName ?? "Nursery",
+        nurseryName: setting?.name ?? "Nursery",
         nurseryAddress: setting?.address ?? null,
         nurseryEmail: setting?.email ?? null,
         lineItems: invoice.lineItems.map((li) => ({

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
-import { getSession } from "@/lib/session";
+import { getSession, nurseryIdOrThrow } from "@/lib/session";
 import { getParentChildIds, getParentChildren } from "@/lib/parent";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -9,6 +9,7 @@ import { ageLabel, formatCurrency, formatDate, invoiceTotal } from "@/lib/utils"
 
 export default async function ParentHomePage() {
   const session = await getSession();
+  const nurseryId = nurseryIdOrThrow(session!);
   const children = await getParentChildren(session!.user.id);
   const childIds = await getParentChildIds(session!.user.id);
 
@@ -19,7 +20,7 @@ export default async function ParentHomePage() {
       orderBy: { dueDate: "asc" },
     }),
     prisma.announcement.findMany({
-      where: { publishedAt: { not: null }, OR: [{ expiresAt: null }, { expiresAt: { gte: new Date() } }] },
+      where: { nurseryId, publishedAt: { not: null }, OR: [{ expiresAt: null }, { expiresAt: { gte: new Date() } }] },
       orderBy: [{ priority: "desc" }, { publishedAt: "desc" }],
       take: 3,
     }),

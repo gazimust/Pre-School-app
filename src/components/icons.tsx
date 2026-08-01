@@ -69,6 +69,12 @@ export const ChildIcon = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 );
 
+export const BuildingIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h9a1.5 1.5 0 011.5 1.5V21H4.5V3zM15 8.25h4.5a1.5 1.5 0 011.5 1.5V21H15V8.25zM7.5 6.75h.008v.008H7.5V6.75zm3 0h.008v.008h-.008V6.75zM7.5 10.5h.008v.008H7.5V10.5zm3 0h.008v.008h-.008V10.5zm-3 3.75h.008v.008H7.5v-.008zm3 0h.008v.008h-.008v-.008zM18 12h.008v.008H18V12zm0 3.75h.008v.008H18v-.008z" />
+  </Icon>
+);
+
 export const MenuIcon = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5" />

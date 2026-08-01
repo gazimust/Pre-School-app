@@ -1,8 +1,8 @@
 {
-  "name": "little-sprouts-nursery",
+  "name": "sprout-nursery-platform",
   "version": "1.0.0",
   "private": true,
-  "description": "Little Sprouts Nursery — admin & parent portal with invoicing, newsletters, announcements, daily diary, and EYFS observations & reports.",
+  "description": "Multi-tenant nursery management platform — platform admin, per-nursery admin/staff dashboard, and parent portal with invoicing, newsletters, announcements, daily diary, and EYFS observations & reports.",
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",

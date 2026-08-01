@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { getSession, nurseryIdOrThrow } from "@/lib/session";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import { ChildForm } from "@/components/admin/ChildForm";
 import { updateChild } from "@/lib/actions/children";
@@ -9,7 +10,10 @@ function toDateInput(d: Date) {
 }
 
 export default async function EditChildPage({ params }: { params: { id: string } }) {
-  const child = await prisma.child.findUnique({ where: { id: params.id } });
+  const session = await getSession();
+  const nurseryId = nurseryIdOrThrow(session!);
+
+  const child = await prisma.child.findFirst({ where: { id: params.id, nurseryId } });
   if (!child) notFound();
 
   const action = updateChild.bind(null, child.id);

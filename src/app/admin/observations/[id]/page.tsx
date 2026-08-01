@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { getSession, nurseryIdOrThrow } from "@/lib/session";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button, LinkButton } from "@/components/ui/Button";
@@ -7,8 +8,11 @@ import { formatDate, ageBandLabel } from "@/lib/utils";
 import { deleteObservation } from "@/lib/actions/observations";
 
 export default async function ObservationDetailPage({ params }: { params: { id: string } }) {
-  const observation = await prisma.observation.findUnique({
-    where: { id: params.id },
+  const session = await getSession();
+  const nurseryId = nurseryIdOrThrow(session!);
+
+  const observation = await prisma.observation.findFirst({
+    where: { id: params.id, nurseryId },
     include: { child: true, staff: true, areas: { include: { eyfsArea: true } } },
   });
   if (!observation) notFound();

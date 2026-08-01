@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { getSession, nurseryIdOrThrow } from "@/lib/session";
 import { StatCard } from "@/components/ui/StatCard";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -8,16 +9,20 @@ import { ChildIcon, InvoiceIcon, SparkleIcon, MegaphoneIcon } from "@/components
 import { formatCurrency, formatDate, invoiceTotal, ageLabel } from "@/lib/utils";
 
 export default async function AdminDashboardPage() {
+  const session = await getSession();
+  const nurseryId = nurseryIdOrThrow(session!);
+
   const [activeChildren, invoices, announcements, observations, newsletters] = await Promise.all([
-    prisma.child.findMany({ where: { active: true } }),
-    prisma.invoice.findMany({ include: { lineItems: true, child: true }, orderBy: { dueDate: "asc" } }),
-    prisma.announcement.count({ where: { publishedAt: { not: null } } }),
+    prisma.child.findMany({ where: { nurseryId, active: true } }),
+    prisma.invoice.findMany({ where: { nurseryId }, include: { lineItems: true, child: true }, orderBy: { dueDate: "asc" } }),
+    prisma.announcement.count({ where: { nurseryId, publishedAt: { not: null } } }),
     prisma.observation.findMany({
+      where: { nurseryId },
       include: { child: true, areas: { include: { eyfsArea: true } } },
       orderBy: { date: "desc" },
       take: 5,
     }),
-    prisma.newsletter.count({ where: { publishedAt: { not: null } } }),
+    prisma.newsletter.count({ where: { nurseryId, publishedAt: { not: null } } }),
   ]);
 
   const outstanding = invoices.filter((i) => i.status === "SENT" || i.status === "OVERDUE");

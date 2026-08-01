@@ -1,11 +1,15 @@
 import { prisma } from "@/lib/prisma";
+import { getSession, nurseryIdOrThrow } from "@/lib/session";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import { ObservationForm } from "@/components/admin/ObservationForm";
 import { createObservation } from "@/lib/actions/observations";
 
 export default async function NewObservationPage({ searchParams }: { searchParams: { childId?: string } }) {
+  const session = await getSession();
+  const nurseryId = nurseryIdOrThrow(session!);
+
   const [children, areas] = await Promise.all([
-    prisma.child.findMany({ where: { active: true }, orderBy: { firstName: "asc" } }),
+    prisma.child.findMany({ where: { nurseryId, active: true }, orderBy: { firstName: "asc" } }),
     prisma.eYFSArea.findMany({ orderBy: { sortOrder: "asc" } }),
   ]);
 

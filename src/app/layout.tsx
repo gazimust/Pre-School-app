@@ -1,18 +1,15 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { Providers } from "./providers";
 
 export const metadata: Metadata = {
-  title: "Little Sprouts Nursery",
-  description: "Admin and parent portal for Little Sprouts Nursery",
+  title: "Sprout — Nursery Management Platform",
+  description: "Multi-nursery admin and parent portal",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>
-        <Providers>{children}</Providers>
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

@@ -8,10 +8,43 @@ datasource db {
 }
 
 // ---------------------------------------------------------------------------
+// Platform / tenancy
+// ---------------------------------------------------------------------------
+
+enum NurseryStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+model Nursery {
+  id            String        @id @default(cuid())
+  name          String
+  slug          String        @unique
+  address       String?
+  phone         String?
+  email         String?
+  invoicePrefix String        @default("INV")
+  logoUrl       String?
+  status        NurseryStatus @default(ACTIVE)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  users         User[]
+  children      Child[]
+  invoices      Invoice[]
+  newsletters   Newsletter[]
+  announcements Announcement[]
+  diaryEntries  DiaryEntry[]
+  observations  Observation[]
+  reports       Report[]
+}
+
+// ---------------------------------------------------------------------------
 // Core identity
 // ---------------------------------------------------------------------------
 
 enum Role {
+  PLATFORM_ADMIN
   ADMIN
   STAFF
   PARENT
@@ -25,9 +58,12 @@ model User {
   role         Role
   phone        String?
   avatarUrl    String?
+  /// Null only for PLATFORM_ADMIN users, who are not scoped to a nursery.
+  nurseryId    String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  nursery               Nursery?      @relation(fields: [nurseryId], references: [id], onDelete: Cascade)
   children              ParentChild[]
   invoicesBilledTo      Invoice[]        @relation("InvoiceParent")
   newslettersAuthored   Newsletter[]     @relation("NewsletterAuthor")
@@ -35,20 +71,8 @@ model User {
   diaryEntriesRecorded  DiaryEntry[]     @relation("DiaryStaff")
   observationsRecorded  Observation[]    @relation("ObservationStaff")
   reportsPrepared       Report[]         @relation("ReportStaff")
-}
 
-// ---------------------------------------------------------------------------
-// Setting / branding (single row)
-// ---------------------------------------------------------------------------
-
-model Setting {
-  id             String  @id @default(cuid())
-  nurseryName    String  @default("Little Sprouts Nursery")
-  address        String?
-  phone          String?
-  email          String?
-  invoicePrefix  String  @default("INV")
-  logoUrl        String?
+  @@index([nurseryId])
 }
 
 // ---------------------------------------------------------------------------
@@ -57,6 +81,7 @@ model Setting {
 
 model Child {
   id            String   @id @default(cuid())
+  nurseryId     String
   firstName     String
   lastName      String
   dateOfBirth   DateTime
@@ -70,11 +95,14 @@ model Child {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  nursery       Nursery       @relation(fields: [nurseryId], references: [id], onDelete: Cascade)
   parents       ParentChild[]
   invoices      Invoice[]
   diaryEntries  DiaryEntry[]
   observations  Observation[]
   reports       Report[]
+
+  @@index([nurseryId])
 }
 
 model ParentChild {
@@ -104,7 +132,8 @@ enum InvoiceStatus {
 
 model Invoice {
   id            String        @id @default(cuid())
-  invoiceNumber String        @unique
+  nurseryId     String
+  invoiceNumber String
   childId       String
   parentId      String
   issueDate     DateTime      @default(now())
@@ -115,9 +144,13 @@ model Invoice {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
+  nursery   Nursery           @relation(fields: [nurseryId], references: [id], onDelete: Cascade)
   child     Child             @relation(fields: [childId], references: [id], onDelete: Cascade)
   parent    User              @relation("InvoiceParent", fields: [parentId], references: [id], onDelete: Cascade)
   lineItems InvoiceLineItem[]
+
+  @@unique([nurseryId, invoiceNumber])
+  @@index([nurseryId])
 }
 
 model InvoiceLineItem {
@@ -136,6 +169,7 @@ model InvoiceLineItem {
 
 model Newsletter {
   id            String    @id @default(cuid())
+  nurseryId     String
   title         String
   body          String
   coverImageUrl String?
@@ -144,7 +178,10 @@ model Newsletter {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  author User @relation("NewsletterAuthor", fields: [authorId], references: [id])
+  nursery Nursery @relation(fields: [nurseryId], references: [id], onDelete: Cascade)
+  author  User    @relation("NewsletterAuthor", fields: [authorId], references: [id])
+
+  @@index([nurseryId])
 }
 
 enum AnnouncementPriority {
@@ -156,6 +193,7 @@ enum AnnouncementPriority {
 
 model Announcement {
   id          String               @id @default(cuid())
+  nurseryId   String
   title       String
   body        String
   priority    AnnouncementPriority @default(NORMAL)
@@ -165,7 +203,10 @@ model Announcement {
   createdAt   DateTime             @default(now())
   updatedAt   DateTime             @updatedAt
 
-  author User @relation("AnnouncementAuthor", fields: [authorId], references: [id])
+  nursery Nursery @relation(fields: [nurseryId], references: [id], onDelete: Cascade)
+  author  User    @relation("AnnouncementAuthor", fields: [authorId], references: [id])
+
+  @@index([nurseryId])
 }
 
 // ---------------------------------------------------------------------------
@@ -204,6 +245,7 @@ enum NappyType {
 
 model DiaryEntry {
   id         String   @id @default(cuid())
+  nurseryId  String
   childId    String
   staffId    String
   date       DateTime
@@ -213,6 +255,7 @@ model DiaryEntry {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
+  nursery      Nursery        @relation(fields: [nurseryId], references: [id], onDelete: Cascade)
   child        Child          @relation(fields: [childId], references: [id], onDelete: Cascade)
   staff        User           @relation("DiaryStaff", fields: [staffId], references: [id])
   meals        Meal[]
@@ -220,6 +263,7 @@ model DiaryEntry {
   nappyChanges NappyChange[]
 
   @@unique([childId, date])
+  @@index([nurseryId])
 }
 
 model Meal {
@@ -254,6 +298,8 @@ model NappyChange {
 // ---------------------------------------------------------------------------
 // EYFS observations & reports
 // ---------------------------------------------------------------------------
+// EYFSArea is shared reference data for the (single, national) EYFS framework
+// and intentionally has no nurseryId — it is not tenant-owned.
 
 enum EYFSAreaType {
   PRIME
@@ -278,6 +324,7 @@ enum EYFSAgeBand {
 
 model Observation {
   id        String      @id @default(cuid())
+  nurseryId String
   childId   String
   staffId   String
   date      DateTime
@@ -289,9 +336,12 @@ model Observation {
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
 
-  child Child             @relation(fields: [childId], references: [id], onDelete: Cascade)
-  staff User              @relation("ObservationStaff", fields: [staffId], references: [id])
-  areas ObservationArea[]
+  nursery Nursery           @relation(fields: [nurseryId], references: [id], onDelete: Cascade)
+  child   Child             @relation(fields: [childId], references: [id], onDelete: Cascade)
+  staff   User              @relation("ObservationStaff", fields: [staffId], references: [id])
+  areas   ObservationArea[]
+
+  @@index([nurseryId])
 }
 
 model ObservationArea {
@@ -320,6 +370,7 @@ enum DevelopmentLevel {
 
 model Report {
   id                 String     @id @default(cuid())
+  nurseryId          String
   childId            String
   staffId            String
   type               ReportType
@@ -330,9 +381,12 @@ model Report {
   generatedAt        DateTime   @default(now())
   sharedWithParentAt DateTime?
 
+  nursery Nursery       @relation(fields: [nurseryId], references: [id], onDelete: Cascade)
   child   Child         @relation(fields: [childId], references: [id], onDelete: Cascade)
   staff   User          @relation("ReportStaff", fields: [staffId], references: [id])
   entries ReportEntry[]
+
+  @@index([nurseryId])
 }
 
 model ReportEntry {

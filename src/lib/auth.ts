@@ -20,17 +20,22 @@ export const authOptions: NextAuthOptions = {
 
         const user = await prisma.user.findUnique({
           where: { email: credentials.email.toLowerCase().trim() },
+          include: { nursery: true },
         });
         if (!user) return null;
 
         const valid = await bcrypt.compare(credentials.password, user.passwordHash);
         if (!valid) return null;
 
+        // A suspended nursery's staff/parents cannot sign in; platform admins have no nursery.
+        if (user.nursery && user.nursery.status === "SUSPENDED") return null;
+
         return {
           id: user.id,
           email: user.email,
           name: user.name,
           role: user.role,
+          nurseryId: user.nurseryId,
         };
       },
     }),
@@ -40,6 +45,7 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         token.id = user.id;
         token.role = user.role;
+        token.nurseryId = user.nurseryId;
       }
       return token;
     },
@@ -47,6 +53,8 @@ export const authOptions: NextAuthOptions = {
       if (session.user) {
         session.user.id = token.id;
         session.user.role = token.role;
+        session.user.nurseryId = token.nurseryId;
+        session.user.impersonatorId = token.impersonatorId ?? null;
       }
       return session;
     },

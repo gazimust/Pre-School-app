@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { getSession, nurseryIdOrThrow } from "@/lib/session";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button, LinkButton } from "@/components/ui/Button";
@@ -16,8 +17,11 @@ const STATUS_COLOR: Record<InvoiceStatus, "gray" | "blue" | "green" | "red" | "a
 };
 
 export default async function InvoiceDetailPage({ params }: { params: { id: string } }) {
-  const invoice = await prisma.invoice.findUnique({
-    where: { id: params.id },
+  const session = await getSession();
+  const nurseryId = nurseryIdOrThrow(session!);
+
+  const invoice = await prisma.invoice.findFirst({
+    where: { id: params.id, nurseryId },
     include: { child: true, parent: true, lineItems: true },
   });
   if (!invoice) notFound();

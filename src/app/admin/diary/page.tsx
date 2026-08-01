@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { getSession, nurseryIdOrThrow } from "@/lib/session";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import { Select, Input } from "@/components/ui/Form";
 import { Button } from "@/components/ui/Button";
@@ -15,8 +16,12 @@ export default async function AdminDiaryPage({
 }: {
   searchParams: { childId?: string; date?: string };
 }) {
-  const children = await prisma.child.findMany({ where: { active: true }, orderBy: { firstName: "asc" } });
-  const childId = searchParams.childId || children[0]?.id;
+  const session = await getSession();
+  const nurseryId = nurseryIdOrThrow(session!);
+
+  const children = await prisma.child.findMany({ where: { nurseryId, active: true }, orderBy: { firstName: "asc" } });
+  const requestedChildId = searchParams.childId;
+  const childId = requestedChildId && children.some((c) => c.id === requestedChildId) ? requestedChildId : children[0]?.id;
   const date = searchParams.date || todayIso();
 
   const entry = childId

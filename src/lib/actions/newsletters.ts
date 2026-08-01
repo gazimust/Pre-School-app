@@ -4,7 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { requireStaff } from "@/lib/session";
+import { requireStaff, nurseryIdOrThrow } from "@/lib/session";
 
 const schema = z.object({
   title: z.string().min(1, "Title is required"),
@@ -14,6 +14,7 @@ const schema = z.object({
 
 export async function createNewsletter(formData: FormData) {
   const session = await requireStaff();
+  const nurseryId = nurseryIdOrThrow(session);
 
   const data = schema.parse({
     title: formData.get("title"),
@@ -25,6 +26,7 @@ export async function createNewsletter(formData: FormData) {
 
   const newsletter = await prisma.newsletter.create({
     data: {
+      nurseryId,
       title: data.title,
       body: data.body,
       coverImageUrl: data.coverImageUrl || undefined,
@@ -38,7 +40,8 @@ export async function createNewsletter(formData: FormData) {
 }
 
 export async function updateNewsletter(newsletterId: string, formData: FormData) {
-  await requireStaff();
+  const session = await requireStaff();
+  const nurseryId = nurseryIdOrThrow(session);
 
   const data = schema.parse({
     title: formData.get("title"),
@@ -46,8 +49,8 @@ export async function updateNewsletter(newsletterId: string, formData: FormData)
     coverImageUrl: formData.get("coverImageUrl") || "",
   });
 
-  await prisma.newsletter.update({
-    where: { id: newsletterId },
+  await prisma.newsletter.updateMany({
+    where: { id: newsletterId, nurseryId },
     data: { title: data.title, body: data.body, coverImageUrl: data.coverImageUrl || null },
   });
 
@@ -57,9 +60,11 @@ export async function updateNewsletter(newsletterId: string, formData: FormData)
 }
 
 export async function togglePublishNewsletter(newsletterId: string, publish: boolean) {
-  await requireStaff();
-  await prisma.newsletter.update({
-    where: { id: newsletterId },
+  const session = await requireStaff();
+  const nurseryId = nurseryIdOrThrow(session);
+
+  await prisma.newsletter.updateMany({
+    where: { id: newsletterId, nurseryId },
     data: { publishedAt: publish ? new Date() : null },
   });
   revalidatePath("/admin/newsletters");
@@ -68,8 +73,10 @@ export async function togglePublishNewsletter(newsletterId: string, publish: boo
 }
 
 export async function deleteNewsletter(newsletterId: string) {
-  await requireStaff();
-  await prisma.newsletter.delete({ where: { id: newsletterId } });
+  const session = await requireStaff();
+  const nurseryId = nurseryIdOrThrow(session);
+
+  await prisma.newsletter.deleteMany({ where: { id: newsletterId, nurseryId } });
   revalidatePath("/admin/newsletters");
   redirect("/admin/newsletters");
 }

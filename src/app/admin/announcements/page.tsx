@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { getSession, nurseryIdOrThrow } from "@/lib/session";
 import { Card, CardBody } from "@/components/ui/Card";
 import { LinkButton, Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -15,7 +16,11 @@ const PRIORITY_COLOR: Record<AnnouncementPriority, "gray" | "blue" | "amber" | "
 };
 
 export default async function AnnouncementsPage() {
+  const session = await getSession();
+  const nurseryId = nurseryIdOrThrow(session!);
+
   const announcements = await prisma.announcement.findMany({
+    where: { nurseryId },
     include: { author: true },
     orderBy: { createdAt: "desc" },
   });

@@ -4,12 +4,16 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { Mood, MealType, MealAmount, NappyType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { requireStaff } from "@/lib/session";
+import { requireStaff, nurseryIdOrThrow } from "@/lib/session";
 
 const MEAL_TYPES: MealType[] = [MealType.BREAKFAST, MealType.SNACK_AM, MealType.LUNCH, MealType.SNACK_PM, MealType.DINNER];
 
 export async function saveDiaryEntry(childId: string, date: string, formData: FormData) {
   const session = await requireStaff();
+  const nurseryId = nurseryIdOrThrow(session);
+
+  const child = await prisma.child.findFirst({ where: { id: childId, nurseryId } });
+  if (!child) throw new Error("Child not found.");
 
   const mood = (formData.get("mood") as Mood) || null;
   const activities = String(formData.get("activities") || "") || null;
@@ -71,6 +75,7 @@ export async function saveDiaryEntry(childId: string, date: string, formData: Fo
   } else {
     await prisma.diaryEntry.create({
       data: {
+        nurseryId,
         childId,
         date: dateObj,
         staffId: session.user.id,

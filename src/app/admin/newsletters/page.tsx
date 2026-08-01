@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { getSession, nurseryIdOrThrow } from "@/lib/session";
 import { Card } from "@/components/ui/Card";
 import { LinkButton } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -7,7 +8,11 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { formatDate } from "@/lib/utils";
 
 export default async function NewslettersPage() {
+  const session = await getSession();
+  const nurseryId = nurseryIdOrThrow(session!);
+
   const newsletters = await prisma.newsletter.findMany({
+    where: { nurseryId },
     include: { author: true },
     orderBy: { createdAt: "desc" },
   });

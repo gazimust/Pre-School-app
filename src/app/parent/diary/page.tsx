@@ -33,7 +33,8 @@ const NAPPY_LABEL: Record<string, string> = { WET: "Wet", DIRTY: "Dirty", BOTH: 
 export default async function ParentDiaryPage({ searchParams }: { searchParams: { childId?: string; date?: string } }) {
   const session = await getSession();
   const children = await getParentChildren(session!.user.id);
-  const childId = searchParams.childId || children[0]?.id;
+  const requestedChildId = searchParams.childId;
+  const childId = requestedChildId && children.some((c) => c.id === requestedChildId) ? requestedChildId : children[0]?.id;
   const date = searchParams.date || todayIso();
 
   const entry = childId

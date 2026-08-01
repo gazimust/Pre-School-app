@@ -8,6 +8,10 @@ export default async function HomePage() {
     redirect("/login");
   }
 
+  if (session.user.role === "PLATFORM_ADMIN") {
+    redirect("/master");
+  }
+
   if (session.user.role === "PARENT") {
     redirect("/parent");
   }

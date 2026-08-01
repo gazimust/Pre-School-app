@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { getSession, nurseryIdOrThrow } from "@/lib/session";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -13,8 +14,12 @@ const PRIORITY_COLOR: Record<AnnouncementPriority, "gray" | "blue" | "amber" | "
 };
 
 export default async function ParentAnnouncementsPage() {
+  const session = await getSession();
+  const nurseryId = nurseryIdOrThrow(session!);
+
   const announcements = await prisma.announcement.findMany({
     where: {
+      nurseryId,
       publishedAt: { not: null },
       OR: [{ expiresAt: null }, { expiresAt: { gte: new Date() } }],
     },

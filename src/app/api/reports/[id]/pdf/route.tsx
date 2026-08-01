@@ -22,19 +22,20 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     return new NextResponse("Not found", { status: 404 });
   }
 
-  const isStaff = session.user.role === "ADMIN" || session.user.role === "STAFF";
+  const isStaff =
+    (session.user.role === "ADMIN" || session.user.role === "STAFF") && session.user.nurseryId === report.nurseryId;
   if (!isStaff) {
     if (!report.sharedWithParentAt) return new NextResponse("Forbidden", { status: 403 });
     const childIds = await getParentChildIds(session.user.id);
     if (!childIds.includes(report.childId)) return new NextResponse("Forbidden", { status: 403 });
   }
 
-  const setting = await prisma.setting.findFirst();
+  const setting = await prisma.nursery.findUnique({ where: { id: report.nurseryId } });
 
   const pdfBuffer = await renderToBuffer(
     <ReportDocument
       data={{
-        nurseryName: setting?.nurseryName ?? "Nursery",
+        nurseryName: setting?.name ?? "Nursery",
         childName: `${report.child.firstName} ${report.child.lastName}`,
         ageBandLabel: ageBandLabel(report.ageBand),
         type: report.type,

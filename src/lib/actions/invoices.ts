@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { InvoiceStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { requireStaff } from "@/lib/session";
+import { requireStaff, nurseryIdOrThrow } from "@/lib/session";
 
 const lineItemSchema = z.object({
   description: z.string().min(1),
@@ -13,15 +13,16 @@ const lineItemSchema = z.object({
   unitPrice: z.coerce.number().nonnegative(),
 });
 
-async function nextInvoiceNumber() {
-  const setting = await prisma.setting.findFirst();
-  const count = await prisma.invoice.count();
-  const prefix = setting?.invoicePrefix ?? "INV";
+async function nextInvoiceNumber(nurseryId: string) {
+  const nursery = await prisma.nursery.findUnique({ where: { id: nurseryId } });
+  const count = await prisma.invoice.count({ where: { nurseryId } });
+  const prefix = nursery?.invoicePrefix ?? "INV";
   return `${prefix}-${1000 + count + 1}`;
 }
 
 export async function createInvoice(formData: FormData) {
-  await requireStaff();
+  const session = await requireStaff();
+  const nurseryId = nurseryIdOrThrow(session);
 
   const childId = String(formData.get("childId") || "");
   const dueDate = String(formData.get("dueDate") || "");
@@ -29,8 +30,8 @@ export async function createInvoice(formData: FormData) {
 
   if (!childId || !dueDate) throw new Error("Child and due date are required.");
 
-  const child = await prisma.child.findUnique({
-    where: { id: childId },
+  const child = await prisma.child.findFirst({
+    where: { id: childId, nurseryId },
     include: { parents: { where: { isPrimaryContact: true }, include: { parent: true } } },
   });
   if (!child) throw new Error("Child not found.");
@@ -38,6 +39,9 @@ export async function createInvoice(formData: FormData) {
   const primaryParent = child.parents[0];
   const parentId = String(formData.get("parentId") || primaryParent?.parentId || "");
   if (!parentId) throw new Error("This child has no parent to bill. Link a parent first.");
+
+  const parent = await prisma.user.findFirst({ where: { id: parentId, nurseryId, role: "PARENT" } });
+  if (!parent) throw new Error("Parent not found in this nursery.");
 
   const descriptions = formData.getAll("description");
   const quantities = formData.getAll("quantity");
@@ -54,10 +58,11 @@ export async function createInvoice(formData: FormData) {
 
   if (lineItems.length === 0) throw new Error("Add at least one line item.");
 
-  const invoiceNumber = await nextInvoiceNumber();
+  const invoiceNumber = await nextInvoiceNumber(nurseryId);
 
   const invoice = await prisma.invoice.create({
     data: {
+      nurseryId,
       invoiceNumber,
       childId,
       parentId,
@@ -73,10 +78,11 @@ export async function createInvoice(formData: FormData) {
 }
 
 export async function updateInvoiceStatus(invoiceId: string, status: InvoiceStatus) {
-  await requireStaff();
+  const session = await requireStaff();
+  const nurseryId = nurseryIdOrThrow(session);
 
-  await prisma.invoice.update({
-    where: { id: invoiceId },
+  await prisma.invoice.updateMany({
+    where: { id: invoiceId, nurseryId },
     data: {
       status,
       paidAt: status === InvoiceStatus.PAID ? new Date() : null,
@@ -89,8 +95,10 @@ export async function updateInvoiceStatus(invoiceId: string, status: InvoiceStat
 }
 
 export async function deleteInvoice(invoiceId: string) {
-  await requireStaff();
-  await prisma.invoice.delete({ where: { id: invoiceId } });
+  const session = await requireStaff();
+  const nurseryId = nurseryIdOrThrow(session);
+
+  await prisma.invoice.deleteMany({ where: { id: invoiceId, nurseryId } });
   revalidatePath("/admin/invoices");
   redirect("/admin/invoices");
 }

@@ -15,7 +15,8 @@ export function NavLink({
   icon?: ReactNode;
 }) {
   const pathname = usePathname();
-  const active = href === "/admin" || href === "/parent" ? pathname === href : pathname.startsWith(href);
+  const active =
+    href === "/admin" || href === "/parent" || href === "/master" ? pathname === href : pathname.startsWith(href);
 
   return (
     <Link

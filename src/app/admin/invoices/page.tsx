@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { getSession, nurseryIdOrThrow } from "@/lib/session";
 import { Card } from "@/components/ui/Card";
 import { LinkButton } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -16,8 +17,11 @@ const STATUS_COLOR: Record<InvoiceStatus, "gray" | "blue" | "green" | "red" | "a
 };
 
 export default async function InvoicesPage({ searchParams }: { searchParams: { childId?: string } }) {
+  const session = await getSession();
+  const nurseryId = nurseryIdOrThrow(session!);
+
   const invoices = await prisma.invoice.findMany({
-    where: searchParams.childId ? { childId: searchParams.childId } : undefined,
+    where: { nurseryId, ...(searchParams.childId ? { childId: searchParams.childId } : {}) },
     include: { child: true, parent: true, lineItems: true },
     orderBy: { issueDate: "desc" },
   });

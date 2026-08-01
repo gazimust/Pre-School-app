@@ -43,8 +43,8 @@ function LoginForm() {
           <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-500 text-2xl">
             🌱
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">Little Sprouts Nursery</h1>
-          <p className="mt-1 text-sm text-gray-500">Sign in to the parent &amp; staff portal</p>
+          <h1 className="text-2xl font-bold text-gray-900">Sprout</h1>
+          <p className="mt-1 text-sm text-gray-500">Sign in to your nursery&rsquo;s parent &amp; staff portal</p>
         </div>
 
         <form onSubmit={onSubmit} className="space-y-4 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
@@ -80,7 +80,8 @@ function LoginForm() {
 
         <div className="mt-6 rounded-xl border border-dashed border-gray-300 bg-white/60 p-4 text-xs text-gray-500">
           <p className="mb-1 font-semibold text-gray-600">Demo accounts (seeded):</p>
-          <p>Admin — admin@littlesprouts.test / password123</p>
+          <p>Platform admin — owner@platform.test / password123</p>
+          <p>Nursery admin — admin@littlesprouts.test / password123</p>
           <p>Staff — staff@littlesprouts.test / password123</p>
           <p>Parent — parent@littlesprouts.test / password123</p>
         </div>

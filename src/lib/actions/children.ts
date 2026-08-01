@@ -4,7 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { requireStaff } from "@/lib/session";
+import { requireStaff, nurseryIdOrThrow } from "@/lib/session";
 
 const childSchema = z.object({
   firstName: z.string().min(1, "First name is required"),
@@ -18,7 +18,8 @@ const childSchema = z.object({
 });
 
 export async function createChild(formData: FormData) {
-  await requireStaff();
+  const session = await requireStaff();
+  const nurseryId = nurseryIdOrThrow(session);
 
   const data = childSchema.parse({
     firstName: formData.get("firstName"),
@@ -34,6 +35,7 @@ export async function createChild(formData: FormData) {
   const child = await prisma.child.create({
     data: {
       ...data,
+      nurseryId,
       dateOfBirth: new Date(data.dateOfBirth),
       startDate: new Date(data.startDate),
     },
@@ -44,7 +46,8 @@ export async function createChild(formData: FormData) {
 }
 
 export async function updateChild(childId: string, formData: FormData) {
-  await requireStaff();
+  const session = await requireStaff();
+  const nurseryId = nurseryIdOrThrow(session);
 
   const data = childSchema.parse({
     firstName: formData.get("firstName"),
@@ -57,14 +60,15 @@ export async function updateChild(childId: string, formData: FormData) {
     medicalNotes: formData.get("medicalNotes") || undefined,
   });
 
-  await prisma.child.update({
-    where: { id: childId },
+  const { count } = await prisma.child.updateMany({
+    where: { id: childId, nurseryId },
     data: {
       ...data,
       dateOfBirth: new Date(data.dateOfBirth),
       startDate: new Date(data.startDate),
     },
   });
+  if (count === 0) throw new Error("Child not found.");
 
   revalidatePath("/admin/children");
   revalidatePath(`/admin/children/${childId}`);
@@ -72,20 +76,29 @@ export async function updateChild(childId: string, formData: FormData) {
 }
 
 export async function toggleChildActive(childId: string, active: boolean) {
-  await requireStaff();
-  await prisma.child.update({ where: { id: childId }, data: { active } });
+  const session = await requireStaff();
+  const nurseryId = nurseryIdOrThrow(session);
+
+  await prisma.child.updateMany({ where: { id: childId, nurseryId }, data: { active } });
   revalidatePath("/admin/children");
   revalidatePath(`/admin/children/${childId}`);
 }
 
 export async function linkParentToChild(childId: string, formData: FormData) {
-  await requireStaff();
+  const session = await requireStaff();
+  const nurseryId = nurseryIdOrThrow(session);
 
   const parentId = String(formData.get("parentId") || "");
   const relationship = String(formData.get("relationship") || "Parent");
   const isPrimaryContact = formData.get("isPrimaryContact") === "on";
 
   if (!parentId) return;
+
+  const [child, parent] = await Promise.all([
+    prisma.child.findFirst({ where: { id: childId, nurseryId } }),
+    prisma.user.findFirst({ where: { id: parentId, nurseryId, role: "PARENT" } }),
+  ]);
+  if (!child || !parent) throw new Error("Child or parent not found in this nursery.");
 
   await prisma.parentChild.upsert({
     where: { parentId_childId: { parentId, childId } },
@@ -97,7 +110,11 @@ export async function linkParentToChild(childId: string, formData: FormData) {
 }
 
 export async function unlinkParentFromChild(parentChildId: string, childId: string) {
-  await requireStaff();
-  await prisma.parentChild.delete({ where: { id: parentChildId } });
+  const session = await requireStaff();
+  const nurseryId = nurseryIdOrThrow(session);
+
+  await prisma.parentChild.deleteMany({
+    where: { id: parentChildId, child: { id: childId, nurseryId } },
+  });
   revalidatePath(`/admin/children/${childId}`);
 }

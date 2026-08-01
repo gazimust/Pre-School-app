@@ -1,12 +1,16 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { getSession, nurseryIdOrThrow } from "@/lib/session";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import { Field, Label, Input, Textarea } from "@/components/ui/Form";
 import { Button, LinkButton } from "@/components/ui/Button";
 import { updateNewsletter } from "@/lib/actions/newsletters";
 
 export default async function EditNewsletterPage({ params }: { params: { id: string } }) {
-  const newsletter = await prisma.newsletter.findUnique({ where: { id: params.id } });
+  const session = await getSession();
+  const nurseryId = nurseryIdOrThrow(session!);
+
+  const newsletter = await prisma.newsletter.findFirst({ where: { id: params.id, nurseryId } });
   if (!newsletter) notFound();
 
   const action = updateNewsletter.bind(null, newsletter.id);

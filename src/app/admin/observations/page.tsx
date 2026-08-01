@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { getSession, nurseryIdOrThrow } from "@/lib/session";
 import { Card } from "@/components/ui/Card";
 import { LinkButton } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -7,8 +8,11 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { formatDate, ageBandLabel } from "@/lib/utils";
 
 export default async function ObservationsPage({ searchParams }: { searchParams: { childId?: string } }) {
+  const session = await getSession();
+  const nurseryId = nurseryIdOrThrow(session!);
+
   const observations = await prisma.observation.findMany({
-    where: searchParams.childId ? { childId: searchParams.childId } : undefined,
+    where: { nurseryId, ...(searchParams.childId ? { childId: searchParams.childId } : {}) },
     include: { child: true, staff: true, areas: { include: { eyfsArea: true } } },
     orderBy: { date: "desc" },
   });

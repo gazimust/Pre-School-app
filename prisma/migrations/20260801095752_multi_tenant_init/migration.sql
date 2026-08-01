@@ -1,5 +1,8 @@
 -- CreateEnum
-CREATE TYPE "Role" AS ENUM ('ADMIN', 'STAFF', 'PARENT');
+CREATE TYPE "NurseryStatus" AS ENUM ('ACTIVE', 'SUSPENDED');
+
+-- CreateEnum
+CREATE TYPE "Role" AS ENUM ('PLATFORM_ADMIN', 'ADMIN', 'STAFF', 'PARENT');
 
 -- CreateEnum
 CREATE TYPE "InvoiceStatus" AS ENUM ('DRAFT', 'SENT', 'PAID', 'OVERDUE', 'CANCELLED');
@@ -32,6 +35,23 @@ CREATE TYPE "ReportType" AS ENUM ('TWO_YEAR_CHECK', 'TERMLY_SUMMARY', 'TRANSITIO
 CREATE TYPE "DevelopmentLevel" AS ENUM ('EMERGING', 'EXPECTED', 'EXCEEDING');
 
 -- CreateTable
+CREATE TABLE "Nursery" (
+    "id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "slug" TEXT NOT NULL,
+    "address" TEXT,
+    "phone" TEXT,
+    "email" TEXT,
+    "invoicePrefix" TEXT NOT NULL DEFAULT 'INV',
+    "logoUrl" TEXT,
+    "status" "NurseryStatus" NOT NULL DEFAULT 'ACTIVE',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Nursery_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "User" (
     "id" TEXT NOT NULL,
     "email" TEXT NOT NULL,
@@ -40,6 +60,7 @@ CREATE TABLE "User" (
     "role" "Role" NOT NULL,
     "phone" TEXT,
     "avatarUrl" TEXT,
+    "nurseryId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -47,21 +68,9 @@ CREATE TABLE "User" (
 );
 
 -- CreateTable
-CREATE TABLE "Setting" (
-    "id" TEXT NOT NULL,
-    "nurseryName" TEXT NOT NULL DEFAULT 'Little Sprouts Nursery',
-    "address" TEXT,
-    "phone" TEXT,
-    "email" TEXT,
-    "invoicePrefix" TEXT NOT NULL DEFAULT 'INV',
-    "logoUrl" TEXT,
-
-    CONSTRAINT "Setting_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
 CREATE TABLE "Child" (
     "id" TEXT NOT NULL,
+    "nurseryId" TEXT NOT NULL,
     "firstName" TEXT NOT NULL,
     "lastName" TEXT NOT NULL,
     "dateOfBirth" TIMESTAMP(3) NOT NULL,
@@ -92,6 +101,7 @@ CREATE TABLE "ParentChild" (
 -- CreateTable
 CREATE TABLE "Invoice" (
     "id" TEXT NOT NULL,
+    "nurseryId" TEXT NOT NULL,
     "invoiceNumber" TEXT NOT NULL,
     "childId" TEXT NOT NULL,
     "parentId" TEXT NOT NULL,
@@ -120,6 +130,7 @@ CREATE TABLE "InvoiceLineItem" (
 -- CreateTable
 CREATE TABLE "Newsletter" (
     "id" TEXT NOT NULL,
+    "nurseryId" TEXT NOT NULL,
     "title" TEXT NOT NULL,
     "body" TEXT NOT NULL,
     "coverImageUrl" TEXT,
@@ -134,6 +145,7 @@ CREATE TABLE "Newsletter" (
 -- CreateTable
 CREATE TABLE "Announcement" (
     "id" TEXT NOT NULL,
+    "nurseryId" TEXT NOT NULL,
     "title" TEXT NOT NULL,
     "body" TEXT NOT NULL,
     "priority" "AnnouncementPriority" NOT NULL DEFAULT 'NORMAL',
@@ -149,6 +161,7 @@ CREATE TABLE "Announcement" (
 -- CreateTable
 CREATE TABLE "DiaryEntry" (
     "id" TEXT NOT NULL,
+    "nurseryId" TEXT NOT NULL,
     "childId" TEXT NOT NULL,
     "staffId" TEXT NOT NULL,
     "date" TIMESTAMP(3) NOT NULL,
@@ -207,6 +220,7 @@ CREATE TABLE "EYFSArea" (
 -- CreateTable
 CREATE TABLE "Observation" (
     "id" TEXT NOT NULL,
+    "nurseryId" TEXT NOT NULL,
     "childId" TEXT NOT NULL,
     "staffId" TEXT NOT NULL,
     "date" TIMESTAMP(3) NOT NULL,
@@ -233,6 +247,7 @@ CREATE TABLE "ObservationArea" (
 -- CreateTable
 CREATE TABLE "Report" (
     "id" TEXT NOT NULL,
+    "nurseryId" TEXT NOT NULL,
     "childId" TEXT NOT NULL,
     "staffId" TEXT NOT NULL,
     "type" "ReportType" NOT NULL,
@@ -258,13 +273,34 @@ CREATE TABLE "ReportEntry" (
 );
 
 -- CreateIndex
+CREATE UNIQUE INDEX "Nursery_slug_key" ON "Nursery"("slug");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
+
+-- CreateIndex
+CREATE INDEX "User_nurseryId_idx" ON "User"("nurseryId");
+
+-- CreateIndex
+CREATE INDEX "Child_nurseryId_idx" ON "Child"("nurseryId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "ParentChild_parentId_childId_key" ON "ParentChild"("parentId", "childId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Invoice_invoiceNumber_key" ON "Invoice"("invoiceNumber");
+CREATE INDEX "Invoice_nurseryId_idx" ON "Invoice"("nurseryId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Invoice_nurseryId_invoiceNumber_key" ON "Invoice"("nurseryId", "invoiceNumber");
+
+-- CreateIndex
+CREATE INDEX "Newsletter_nurseryId_idx" ON "Newsletter"("nurseryId");
+
+-- CreateIndex
+CREATE INDEX "Announcement_nurseryId_idx" ON "Announcement"("nurseryId");
+
+-- CreateIndex
+CREATE INDEX "DiaryEntry_nurseryId_idx" ON "DiaryEntry"("nurseryId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "DiaryEntry_childId_date_key" ON "DiaryEntry"("childId", "date");
@@ -273,16 +309,31 @@ CREATE UNIQUE INDEX "DiaryEntry_childId_date_key" ON "DiaryEntry"("childId", "da
 CREATE UNIQUE INDEX "EYFSArea_name_key" ON "EYFSArea"("name");
 
 -- CreateIndex
+CREATE INDEX "Observation_nurseryId_idx" ON "Observation"("nurseryId");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "ObservationArea_observationId_eyfsAreaId_key" ON "ObservationArea"("observationId", "eyfsAreaId");
 
 -- CreateIndex
+CREATE INDEX "Report_nurseryId_idx" ON "Report"("nurseryId");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "ReportEntry_reportId_eyfsAreaId_key" ON "ReportEntry"("reportId", "eyfsAreaId");
+
+-- AddForeignKey
+ALTER TABLE "User" ADD CONSTRAINT "User_nurseryId_fkey" FOREIGN KEY ("nurseryId") REFERENCES "Nursery"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Child" ADD CONSTRAINT "Child_nurseryId_fkey" FOREIGN KEY ("nurseryId") REFERENCES "Nursery"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ParentChild" ADD CONSTRAINT "ParentChild_parentId_fkey" FOREIGN KEY ("parentId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ParentChild" ADD CONSTRAINT "ParentChild_childId_fkey" FOREIGN KEY ("childId") REFERENCES "Child"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Invoice" ADD CONSTRAINT "Invoice_nurseryId_fkey" FOREIGN KEY ("nurseryId") REFERENCES "Nursery"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Invoice" ADD CONSTRAINT "Invoice_childId_fkey" FOREIGN KEY ("childId") REFERENCES "Child"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -294,10 +345,19 @@ ALTER TABLE "Invoice" ADD CONSTRAINT "Invoice_parentId_fkey" FOREIGN KEY ("paren
 ALTER TABLE "InvoiceLineItem" ADD CONSTRAINT "InvoiceLineItem_invoiceId_fkey" FOREIGN KEY ("invoiceId") REFERENCES "Invoice"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "Newsletter" ADD CONSTRAINT "Newsletter_nurseryId_fkey" FOREIGN KEY ("nurseryId") REFERENCES "Nursery"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "Newsletter" ADD CONSTRAINT "Newsletter_authorId_fkey" FOREIGN KEY ("authorId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "Announcement" ADD CONSTRAINT "Announcement_nurseryId_fkey" FOREIGN KEY ("nurseryId") REFERENCES "Nursery"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "Announcement" ADD CONSTRAINT "Announcement_authorId_fkey" FOREIGN KEY ("authorId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "DiaryEntry" ADD CONSTRAINT "DiaryEntry_nurseryId_fkey" FOREIGN KEY ("nurseryId") REFERENCES "Nursery"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "DiaryEntry" ADD CONSTRAINT "DiaryEntry_childId_fkey" FOREIGN KEY ("childId") REFERENCES "Child"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -315,6 +375,9 @@ ALTER TABLE "Nap" ADD CONSTRAINT "Nap_diaryEntryId_fkey" FOREIGN KEY ("diaryEntr
 ALTER TABLE "NappyChange" ADD CONSTRAINT "NappyChange_diaryEntryId_fkey" FOREIGN KEY ("diaryEntryId") REFERENCES "DiaryEntry"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "Observation" ADD CONSTRAINT "Observation_nurseryId_fkey" FOREIGN KEY ("nurseryId") REFERENCES "Nursery"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "Observation" ADD CONSTRAINT "Observation_childId_fkey" FOREIGN KEY ("childId") REFERENCES "Child"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -325,6 +388,9 @@ ALTER TABLE "ObservationArea" ADD CONSTRAINT "ObservationArea_observationId_fkey
 
 -- AddForeignKey
 ALTER TABLE "ObservationArea" ADD CONSTRAINT "ObservationArea_eyfsAreaId_fkey" FOREIGN KEY ("eyfsAreaId") REFERENCES "EYFSArea"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Report" ADD CONSTRAINT "Report_nurseryId_fkey" FOREIGN KEY ("nurseryId") REFERENCES "Nursery"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Report" ADD CONSTRAINT "Report_childId_fkey" FOREIGN KEY ("childId") REFERENCES "Child"("id") ON DELETE CASCADE ON UPDATE CASCADE;

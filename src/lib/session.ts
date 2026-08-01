@@ -25,3 +25,18 @@ export async function requireStaff() {
 export async function requireParent() {
   return requireRole("PARENT");
 }
+
+export async function requirePlatformAdmin() {
+  return requireRole("PLATFORM_ADMIN");
+}
+
+/**
+ * ADMIN/STAFF/PARENT users always have a nurseryId (only PLATFORM_ADMIN does not);
+ * this narrows the type and fails loudly if that invariant is ever broken.
+ */
+export function nurseryIdOrThrow(session: { user: { nurseryId: string | null } }): string {
+  if (!session.user.nurseryId) {
+    throw new Error("Expected an authenticated nursery user, but session has no nurseryId.");
+  }
+  return session.user.nurseryId;
+}

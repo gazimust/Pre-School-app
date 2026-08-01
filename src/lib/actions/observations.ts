@@ -4,10 +4,11 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { EYFSAgeBand } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { requireStaff } from "@/lib/session";
+import { requireStaff, nurseryIdOrThrow } from "@/lib/session";
 
 export async function createObservation(formData: FormData) {
   const session = await requireStaff();
+  const nurseryId = nurseryIdOrThrow(session);
 
   const childId = String(formData.get("childId") || "");
   const date = String(formData.get("date") || "");
@@ -21,8 +22,12 @@ export async function createObservation(formData: FormData) {
     throw new Error("Please fill in all required fields and select at least one EYFS area.");
   }
 
+  const child = await prisma.child.findFirst({ where: { id: childId, nurseryId } });
+  if (!child) throw new Error("Child not found.");
+
   const observation = await prisma.observation.create({
     data: {
+      nurseryId,
       childId,
       staffId: session.user.id,
       date: new Date(date),
@@ -40,8 +45,10 @@ export async function createObservation(formData: FormData) {
 }
 
 export async function deleteObservation(observationId: string) {
-  await requireStaff();
-  await prisma.observation.delete({ where: { id: observationId } });
+  const session = await requireStaff();
+  const nurseryId = nurseryIdOrThrow(session);
+
+  await prisma.observation.deleteMany({ where: { id: observationId, nurseryId } });
   revalidatePath("/admin/observations");
   revalidatePath("/parent/learning");
   redirect("/admin/observations");

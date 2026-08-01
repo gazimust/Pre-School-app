@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { getSession, nurseryIdOrThrow } from "@/lib/session";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { Button, LinkButton } from "@/components/ui/Button";
@@ -8,8 +9,11 @@ import { REPORT_TYPE_LABEL, DEVELOPMENT_LEVEL_LABEL, DEVELOPMENT_LEVEL_COLOR } f
 import { shareReportWithParent, deleteReport } from "@/lib/actions/reports";
 
 export default async function ReportDetailPage({ params }: { params: { id: string } }) {
-  const report = await prisma.report.findUnique({
-    where: { id: params.id },
+  const session = await getSession();
+  const nurseryId = nurseryIdOrThrow(session!);
+
+  const report = await prisma.report.findFirst({
+    where: { id: params.id, nurseryId },
     include: { child: true, staff: true, entries: { include: { eyfsArea: true } } },
   });
   if (!report) notFound();

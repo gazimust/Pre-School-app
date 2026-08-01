@@ -4,20 +4,22 @@ import { z } from "zod";
 import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { requireStaff } from "@/lib/session";
+import { requireStaff, nurseryIdOrThrow } from "@/lib/session";
+
+const NURSERY_ROLES = ["ADMIN", "STAFF", "PARENT"] as const;
 
 const personSchema = z.object({
   name: z.string().min(1, "Name is required"),
   email: z.string().email("Enter a valid email"),
   phone: z.string().optional(),
-  role: z.nativeEnum(Role),
+  role: z.enum(NURSERY_ROLES),
   password: z.string().min(8, "Password must be at least 8 characters"),
 });
 
 export async function createPerson(formData: FormData) {
-  await requireStaff();
+  const session = await requireStaff();
+  const nurseryId = nurseryIdOrThrow(session);
 
   const data = personSchema.parse({
     name: formData.get("name"),
@@ -40,6 +42,7 @@ export async function createPerson(formData: FormData) {
       email: data.email.toLowerCase().trim(),
       phone: data.phone,
       role: data.role,
+      nurseryId,
       passwordHash,
     },
   });
@@ -49,14 +52,16 @@ export async function createPerson(formData: FormData) {
 }
 
 export async function updatePerson(userId: string, formData: FormData) {
-  await requireStaff();
+  const session = await requireStaff();
+  const nurseryId = nurseryIdOrThrow(session);
 
   const name = String(formData.get("name") || "");
   const phone = String(formData.get("phone") || "") || null;
 
   if (!name) throw new Error("Name is required");
 
-  await prisma.user.update({ where: { id: userId }, data: { name, phone } });
+  const { count } = await prisma.user.updateMany({ where: { id: userId, nurseryId }, data: { name, phone } });
+  if (count === 0) throw new Error("Person not found.");
 
   revalidatePath("/admin/people");
 }

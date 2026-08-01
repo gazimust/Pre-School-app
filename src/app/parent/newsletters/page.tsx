@@ -1,12 +1,16 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { getSession, nurseryIdOrThrow } from "@/lib/session";
 import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { formatDate } from "@/lib/utils";
 
 export default async function ParentNewslettersPage() {
+  const session = await getSession();
+  const nurseryId = nurseryIdOrThrow(session!);
+
   const newsletters = await prisma.newsletter.findMany({
-    where: { publishedAt: { not: null } },
+    where: { nurseryId, publishedAt: { not: null } },
     orderBy: { publishedAt: "desc" },
   });
 

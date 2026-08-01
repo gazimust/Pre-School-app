@@ -1,10 +1,15 @@
 import { prisma } from "@/lib/prisma";
+import { getSession, nurseryIdOrThrow } from "@/lib/session";
 import { Card, CardHeader, CardBody } from "@/components/ui/Card";
 import { LinkButton } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 
 export default async function PeoplePage() {
+  const session = await getSession();
+  const nurseryId = nurseryIdOrThrow(session!);
+
   const users = await prisma.user.findMany({
+    where: { nurseryId },
     include: { children: { include: { child: true } } },
     orderBy: [{ role: "asc" }, { name: "asc" }],
   });

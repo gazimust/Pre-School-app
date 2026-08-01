@@ -23,9 +23,11 @@ const NAV = [
 export function ParentShell({
   children,
   userName,
+  nurseryName,
 }: {
   children: ReactNode;
   userName: string;
+  nurseryName: string;
 }) {
   return (
     <div className="flex min-h-screen flex-col bg-gray-50">
@@ -33,8 +35,8 @@ export function ParentShell({
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-500 text-lg">🌱</div>
-            <div>
-              <p className="text-sm font-bold text-gray-900">Little Sprouts Nursery</p>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-bold text-gray-900">{nurseryName}</p>
               <p className="text-xs text-gray-500">Parent Portal</p>
             </div>
           </div>
